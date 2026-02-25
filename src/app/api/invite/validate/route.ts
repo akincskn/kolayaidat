@@ -1,0 +1,44 @@
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+
+export async function GET(req: NextRequest) {
+  const token = req.nextUrl.searchParams.get("token");
+
+  if (!token) {
+    return NextResponse.json({ error: "Token gereklidir." }, { status: 400 });
+  }
+
+  const invite = await prisma.invite.findUnique({
+    where: { token },
+    include: {
+      unit: { include: { apartment: true } },
+    },
+  });
+
+  if (!invite) {
+    return NextResponse.json(
+      { error: "Geçersiz davet bağlantısı." },
+      { status: 404 }
+    );
+  }
+
+  if (invite.usedAt) {
+    return NextResponse.json(
+      { error: "Bu davet bağlantısı daha önce kullanılmış." },
+      { status: 400 }
+    );
+  }
+
+  if (new Date() > invite.expiresAt) {
+    return NextResponse.json(
+      { error: "Bu davet bağlantısının süresi dolmuş." },
+      { status: 400 }
+    );
+  }
+
+  return NextResponse.json({
+    email: invite.email,
+    unitNumber: invite.unit.unitNumber,
+    apartmentName: invite.unit.apartment.name,
+  });
+}
