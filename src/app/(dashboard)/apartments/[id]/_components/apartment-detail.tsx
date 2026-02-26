@@ -88,32 +88,41 @@ export function ApartmentDetail({ apartment: initial }: { apartment: Apartment }
     if (unit.resident) { toast.error("Sakin atanmış daireyi silemezsiniz."); return; }
     if (!confirm(`Daire ${unit.unitNumber} silinsin mi?`)) return;
 
-    const res = await fetch(`/api/apartments/${apartment.id}/units/${unit.id}`, { method: "DELETE" });
-    if (res.ok) {
-      setApartment((prev) => ({ ...prev, units: prev.units.filter((u) => u.id !== unit.id) }));
-      toast.success("Daire silindi.");
-    } else {
-      const d = await res.json();
-      toast.error(d.error);
+    try {
+      const res = await fetch(`/api/apartments/${apartment.id}/units/${unit.id}`, { method: "DELETE" });
+      if (res.ok) {
+        setApartment((prev) => ({ ...prev, units: prev.units.filter((u) => u.id !== unit.id) }));
+        toast.success("Daire silindi.");
+      } else {
+        const d = await res.json();
+        toast.error(d.error);
+      }
+    } catch {
+      toast.error("Bağlantı hatası oluştu.");
     }
   }
 
   async function removeResident(unit: Unit) {
     if (!confirm(`${unit.resident?.name} daireden çıkarılsın mı?`)) return;
-    const res = await fetch(`/api/apartments/${apartment.id}/units/${unit.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "remove_resident" }),
-    });
-    if (res.ok) {
-      setApartment((prev) => ({
-        ...prev,
-        units: prev.units.map((u) => u.id === unit.id ? { ...u, resident: null } : u),
-      }));
-      toast.success("Sakin daireden çıkarıldı.");
-    } else {
-      const d = await res.json();
-      toast.error(d.error);
+
+    try {
+      const res = await fetch(`/api/apartments/${apartment.id}/units/${unit.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "remove_resident" }),
+      });
+      if (res.ok) {
+        setApartment((prev) => ({
+          ...prev,
+          units: prev.units.map((u) => u.id === unit.id ? { ...u, resident: null } : u),
+        }));
+        toast.success("Sakin daireden çıkarıldı.");
+      } else {
+        const d = await res.json();
+        toast.error(d.error);
+      }
+    } catch {
+      toast.error("Bağlantı hatası oluştu.");
     }
   }
 

@@ -139,8 +139,8 @@ model Payment {
   reviewedAt      DateTime?
   updatedAt       DateTime      @updatedAt
 
-  due      Due  @relation(fields: [dueId], references: [id])
-  unit     Unit @relation(fields: [unitId], references: [id])
+  due      Due  @relation(fields: [dueId], references: [id], onDelete: Cascade)
+  unit     Unit @relation(fields: [unitId], references: [id], onDelete: Cascade)
   resident User @relation(fields: [residentId], references: [id])
 
   @@unique([dueId, unitId])

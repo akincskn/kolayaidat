@@ -9,6 +9,10 @@ export async function PATCH(req: NextRequest) {
 
   const { currentPassword, newPassword } = await req.json();
 
+  if (!currentPassword || !newPassword || newPassword.length < 6) {
+    return NextResponse.json({ error: "Yeni şifre en az 6 karakter olmalıdır." }, { status: 400 });
+  }
+
   const user = await prisma.user.findUnique({ where: { id: session.user.id } });
   if (!user?.password) return NextResponse.json({ error: "Kullanıcı bulunamadı." }, { status: 404 });
 

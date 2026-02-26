@@ -56,7 +56,7 @@ export function AdminDashboard({ apartments }: { apartments: Apartment[] }) {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-800">Dashboard</h1>
+          <h1 className="text-2xl font-bold text-slate-800">Genel Bakış</h1>
           <p className="text-slate-500 text-sm">Tüm apartmanlarınıza genel bakış</p>
         </div>
         <Button asChild>

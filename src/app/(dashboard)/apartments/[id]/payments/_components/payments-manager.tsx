@@ -78,6 +78,8 @@ export function PaymentsManager({
       toast.success(action === "approve" ? "Dekont onaylandı." : "Dekont reddedildi.");
       setReviewPayment(null);
       setRejectionReason("");
+    } catch {
+      toast.error("Bağlantı hatası oluştu.");
     } finally {
       setProcessing(false);
     }

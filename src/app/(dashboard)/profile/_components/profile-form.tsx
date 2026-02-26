@@ -34,8 +34,9 @@ export function ProfileForm({ user }: ProfileFormProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(profile),
       });
+      const data = await res.json();
       if (res.ok) toast.success("Profil güncellendi.");
-      else toast.error("Güncelleme başarısız.");
+      else toast.error(data.error || "Güncelleme başarısız.");
     } finally {
       setIsSaving(false);
     }

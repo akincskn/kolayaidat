@@ -11,6 +11,7 @@ import {
   CreditCard,
   User,
   LogOut,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -21,10 +22,11 @@ interface SidebarProps {
     email: string;
     role: Role;
   };
+  onClose?: () => void;
 }
 
 const adminLinks = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/dashboard", label: "Genel Bakış", icon: LayoutDashboard },
   { href: "/apartments", label: "Apartmanlar", icon: Building2 },
 ];
 
@@ -33,7 +35,7 @@ const residentLinks = [
   { href: "/my-payments", label: "Ödemelerim", icon: CreditCard },
 ];
 
-export function Sidebar({ user }: SidebarProps) {
+export function Sidebar({ user, onClose }: SidebarProps) {
   const pathname = usePathname();
   const links = user.role === "ADMIN" ? adminLinks : residentLinks;
 
@@ -47,11 +49,22 @@ export function Sidebar({ user }: SidebarProps) {
   return (
     <aside className="w-64 min-h-screen bg-slate-900 text-white flex flex-col">
       {/* Logo */}
-      <div className="p-6 border-b border-slate-700">
-        <h1 className="text-xl font-bold">KolayAidat</h1>
-        <p className="text-slate-400 text-xs mt-0.5">
-          {user.role === "ADMIN" ? "Yönetici Paneli" : "Sakin Paneli"}
-        </p>
+      <div className="p-6 border-b border-slate-700 flex items-start justify-between">
+        <div>
+          <h1 className="text-xl font-bold">KolayAidat</h1>
+          <p className="text-slate-400 text-xs mt-0.5">
+            {user.role === "ADMIN" ? "Yönetici Paneli" : "Sakin Paneli"}
+          </p>
+        </div>
+        {onClose && (
+          <button
+            onClick={onClose}
+            className="text-slate-400 hover:text-white p-1 rounded"
+            aria-label="Menüyü kapat"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        )}
       </div>
 
       {/* Navigation */}

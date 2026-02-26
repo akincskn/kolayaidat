@@ -58,7 +58,23 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   const apartment = await getOwnedApartment(params.id, session.user.id);
   if (!apartment) return NextResponse.json({ error: "Apartman bulunamadı." }, { status: 404 });
 
-  await prisma.apartment.delete({ where: { id: params.id } });
+  try {
+    await prisma.$transaction(async (tx) => {
+      const units = await tx.unit.findMany({
+        where: { apartmentId: params.id },
+        select: { id: true },
+      });
+      const unitIds = units.map((u) => u.id);
+      if (unitIds.length > 0) {
+        await tx.payment.deleteMany({ where: { unitId: { in: unitIds } } });
+        await tx.invite.deleteMany({ where: { unitId: { in: unitIds } } });
+      }
+      await tx.apartment.delete({ where: { id: params.id } });
+    });
 
-  return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error("[APARTMENT_DELETE]", error);
+    return NextResponse.json({ error: "Apartman silinemedi." }, { status: 500 });
+  }
 }

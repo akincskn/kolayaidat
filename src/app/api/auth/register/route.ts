@@ -13,6 +13,21 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    if (password.length < 6) {
+      return NextResponse.json(
+        { error: "Şifre en az 6 karakter olmalıdır." },
+        { status: 400 }
+      );
+    }
+
+    const adminExists = await prisma.user.findFirst({ where: { role: "ADMIN" } });
+    if (adminExists) {
+      return NextResponse.json(
+        { error: "Yönetici hesabı zaten mevcut. Sakin olarak kaydolmak için davet bağlantısı kullanın." },
+        { status: 403 }
+      );
+    }
+
     const existing = await prisma.user.findUnique({ where: { email } });
     if (existing) {
       return NextResponse.json(
