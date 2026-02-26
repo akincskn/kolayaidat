@@ -2,7 +2,7 @@
 
 Apartman yöneticileri ve sakinler için modern, tam-stack aidat takip uygulaması. Yöneticiler daire ve aidat tanımlar, sakinler dekont yükler; yönetici onay/red yapıp e-posta bildirimi gönderir.
 
-> **Canlı Demo:** _Yakında eklenecek_
+> **Canlı Demo:** https://kolayaidat.vercel.app
 
 ---
 
