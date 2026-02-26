@@ -7,17 +7,18 @@ import { Role } from "@prisma/client";
 
 interface DashboardShellProps {
   user: { name: string; email: string; role: Role };
+  apartments: { id: string; name: string }[];
   children: React.ReactNode;
 }
 
-export function DashboardShell({ user, children }: DashboardShellProps) {
+export function DashboardShell({ user, apartments, children }: DashboardShellProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   return (
     <div className="flex min-h-screen">
       {/* Desktop sidebar */}
       <div className="hidden md:flex">
-        <Sidebar user={user} />
+        <Sidebar user={user} apartments={apartments} />
       </div>
 
       {/* Mobile sidebar overlay */}
@@ -28,7 +29,7 @@ export function DashboardShell({ user, children }: DashboardShellProps) {
             onClick={() => setSidebarOpen(false)}
           />
           <div className="relative z-10 h-full w-64">
-            <Sidebar user={user} onClose={() => setSidebarOpen(false)} />
+            <Sidebar user={user} apartments={apartments} onClose={() => setSidebarOpen(false)} />
           </div>
         </div>
       )}
@@ -41,9 +42,9 @@ export function DashboardShell({ user, children }: DashboardShellProps) {
             className="p-1.5 rounded-md text-slate-600 hover:bg-slate-100"
             aria-label="Menüyü aç"
           >
-            <Menu className="w-5 h-5" />
+            <Menu className="w-6 h-6" />
           </button>
-          <span className="font-semibold text-slate-800">KolayAidat</span>
+          <span className="font-semibold text-slate-800 text-lg">KolayAidat</span>
         </header>
 
         <main className="flex-1 bg-slate-50 overflow-auto">

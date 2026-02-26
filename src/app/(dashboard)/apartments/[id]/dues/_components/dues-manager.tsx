@@ -121,7 +121,11 @@ export function DuesManager({
         <div className="space-y-3">
           {dues.map((due) => {
             const stats = getDueStats(due, occupiedUnits);
-            const isPast = new Date(due.dueDate as string) < new Date();
+            const now = new Date();
+            // "Vadesi Geçti" sadece: o ay/yıl ≤ bugün VE son ödeme tarihi geçmiş
+            const dueMonthStart = new Date(due.year, due.month - 1, 1);
+            const isPast =
+              dueMonthStart <= now && new Date(due.dueDate as string) < now;
             return (
               <Card key={due.id}>
                 <CardContent className="py-4 px-5">

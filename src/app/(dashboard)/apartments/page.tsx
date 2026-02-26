@@ -24,7 +24,7 @@ export default async function ApartmentsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-800">Apartmanlar</h1>
+          <h1 className="text-2xl font-bold text-slate-800">Apartmanlarım</h1>
           <p className="text-slate-500 text-sm">Yönettiğiniz apartmanlar</p>
         </div>
         <Button asChild>

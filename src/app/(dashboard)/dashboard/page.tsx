@@ -4,29 +4,45 @@ import { redirect } from "next/navigation";
 import { AdminDashboard } from "./_components/admin-dashboard";
 import { ResidentDashboard } from "./_components/resident-dashboard";
 
-export default async function DashboardPage() {
+interface PageProps {
+  searchParams: Promise<{ apt?: string }>;
+}
+
+export default async function DashboardPage({ searchParams }: PageProps) {
   const session = await auth();
   if (!session?.user) redirect("/login");
 
   if (session.user.role === "ADMIN") {
-    const apartments = await prisma.apartment.findMany({
+    const { apt } = await searchParams;
+
+    const allApartments = await prisma.apartment.findMany({
       where: { managerId: session.user.id },
-      include: {
-        units: {
-          include: {
-            resident: true,
-            payments: {
-              include: { due: true },
-              orderBy: { uploadedAt: "desc" },
-            },
-          },
-        },
-        dues: { orderBy: { createdAt: "desc" }, take: 1 },
-      },
-      orderBy: { createdAt: "desc" },
+      select: { id: true, name: true },
+      orderBy: { createdAt: "asc" },
     });
 
-    return <AdminDashboard apartments={apartments} />;
+    const selectedId = allApartments.find((a) => a.id === apt)?.id ?? allApartments[0]?.id;
+
+    const apartment = selectedId
+      ? await prisma.apartment.findUnique({
+          where: { id: selectedId },
+          include: {
+            units: {
+              include: {
+                resident: { select: { id: true, name: true } },
+                payments: {
+                  include: { due: true },
+                  orderBy: { uploadedAt: "desc" },
+                },
+              },
+              orderBy: { unitNumber: "asc" },
+            },
+            dues: { orderBy: [{ year: "desc" }, { month: "desc" }] },
+          },
+        })
+      : null;
+
+    return <AdminDashboard apartment={apartment} />;
   }
 
   // RESIDENT dashboard
