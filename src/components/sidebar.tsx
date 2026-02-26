@@ -41,6 +41,7 @@ const adminLinks = [
 ];
 
 const residentLinks = [
+  { href: "/dashboard", label: "Anasayfa", icon: LayoutDashboard, keepApt: false },
   { href: "/my-payments", label: "Ödemelerim", icon: CreditCard, keepApt: false },
   { href: "/profile", label: "Profil", icon: User, keepApt: false },
 ];
