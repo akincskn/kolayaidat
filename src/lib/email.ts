@@ -16,7 +16,7 @@ export async function sendInviteEmail({
   unitNumber: string;
   invitedBy: string;
 }) {
-  await resend.emails.send({
+  const { error } = await resend.emails.send({
     from: FROM,
     to,
     subject: `${apartmentName} - Apartman Sistemi Davetiyesi`,
@@ -76,6 +76,8 @@ export async function sendInviteEmail({
       </html>
     `,
   });
+
+  if (error) throw new Error(`Resend invite: ${error.message}`);
 }
 
 export async function sendPaymentStatusEmail({
@@ -104,7 +106,7 @@ export async function sendPaymentStatusEmail({
   const statusText = isApproved ? "Onaylandı" : "Reddedildi";
   const statusColor = isApproved ? "#16a34a" : "#dc2626";
 
-  await resend.emails.send({
+  const { error } = await resend.emails.send({
     from: FROM,
     to,
     subject: `Dekontunuz ${statusText} - ${MONTHS_TR[month]} ${year}`,
@@ -152,4 +154,6 @@ export async function sendPaymentStatusEmail({
       </html>
     `,
   });
+
+  if (error) throw new Error(`Resend payment: ${error.message}`);
 }
