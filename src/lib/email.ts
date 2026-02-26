@@ -1,7 +1,16 @@
-import { Resend } from "resend";
+import nodemailer from "nodemailer";
 
-const resend = new Resend(process.env.RESEND_API_KEY);
-const FROM = process.env.RESEND_FROM_EMAIL ?? "KolayAidat <noreply@kolayaidat.com>";
+const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST ?? "smtp.gmail.com",
+  port: Number(process.env.SMTP_PORT ?? 587),
+  secure: false, // STARTTLS
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+  },
+});
+
+const FROM = `KolayAidat <${process.env.SMTP_USER}>`;
 
 export async function sendInviteEmail({
   to,
@@ -16,7 +25,7 @@ export async function sendInviteEmail({
   unitNumber: string;
   invitedBy: string;
 }) {
-  const { error } = await resend.emails.send({
+  await transporter.sendMail({
     from: FROM,
     to,
     subject: `${apartmentName} - Apartman Sistemi Davetiyesi`,
@@ -29,14 +38,12 @@ export async function sendInviteEmail({
           <tr>
             <td align="center">
               <table width="600" cellpadding="0" cellspacing="0" style="background: #fff; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-                <!-- Header -->
                 <tr>
                   <td style="background: #1e293b; padding: 32px; text-align: center;">
                     <h1 style="color: #fff; margin: 0; font-size: 24px;">KolayAidat</h1>
                     <p style="color: #94a3b8; margin: 4px 0 0; font-size: 14px;">Apartman Aidat Yönetimi</p>
                   </td>
                 </tr>
-                <!-- Body -->
                 <tr>
                   <td style="padding: 40px 32px;">
                     <h2 style="color: #1e293b; margin: 0 0 16px; font-size: 20px;">Apartman sistemine davet edildiniz</h2>
@@ -60,7 +67,6 @@ export async function sendInviteEmail({
                     </p>
                   </td>
                 </tr>
-                <!-- Footer -->
                 <tr>
                   <td style="background: #f8fafc; padding: 20px 32px; border-top: 1px solid #e2e8f0; text-align: center;">
                     <p style="color: #94a3b8; font-size: 12px; margin: 0;">
@@ -76,8 +82,6 @@ export async function sendInviteEmail({
       </html>
     `,
   });
-
-  if (error) throw new Error(`Resend invite: ${error.message}`);
 }
 
 export async function sendPaymentStatusEmail({
@@ -106,7 +110,7 @@ export async function sendPaymentStatusEmail({
   const statusText = isApproved ? "Onaylandı" : "Reddedildi";
   const statusColor = isApproved ? "#16a34a" : "#dc2626";
 
-  const { error } = await resend.emails.send({
+  await transporter.sendMail({
     from: FROM,
     to,
     subject: `Dekontunuz ${statusText} - ${MONTHS_TR[month]} ${year}`,
@@ -154,6 +158,4 @@ export async function sendPaymentStatusEmail({
       </html>
     `,
   });
-
-  if (error) throw new Error(`Resend payment: ${error.message}`);
 }
