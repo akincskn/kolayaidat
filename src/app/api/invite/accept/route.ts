@@ -6,7 +6,7 @@ import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 export async function POST(req: NextRequest) {
   // Rate limit: IP başına 10 deneme/saat
   const ip = getClientIp(req);
-  const { success, resetAt } = checkRateLimit(`invite-accept:${ip}`, 10, 60 * 60 * 1000);
+  const { success, resetAt } = checkRateLimit(`invite-accept:${ip}`, 100, 60 * 60 * 1000);
   if (!success) {
     return NextResponse.json(
       { error: "Çok fazla deneme. Lütfen bir saat sonra tekrar deneyin." },

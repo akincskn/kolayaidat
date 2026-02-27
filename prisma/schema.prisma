@@ -153,6 +153,17 @@ model Payment {
   @@index([status])
 }
 
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  email     String
+  token     String    @unique @default(cuid())
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([email])
+}
+
 model Invite {
   id          String    @id @default(cuid())
   email       String

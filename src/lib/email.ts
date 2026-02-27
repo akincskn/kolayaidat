@@ -84,6 +84,71 @@ export async function sendInviteEmail({
   });
 }
 
+export async function sendPasswordResetEmail({
+  to,
+  resetUrl,
+}: {
+  to: string;
+  resetUrl: string;
+}) {
+  await transporter.sendMail({
+    from: FROM,
+    to,
+    subject: "KolayAidat - Şifre Sıfırlama",
+    html: `
+      <!DOCTYPE html>
+      <html lang="tr">
+      <head><meta charset="UTF-8" /></head>
+      <body style="font-family: Arial, sans-serif; background: #f8fafc; margin: 0; padding: 0;">
+        <table width="100%" cellpadding="0" cellspacing="0" style="background: #f8fafc; padding: 40px 20px;">
+          <tr>
+            <td align="center">
+              <table width="600" cellpadding="0" cellspacing="0" style="background: #fff; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                <tr>
+                  <td style="background: #1e293b; padding: 32px; text-align: center;">
+                    <h1 style="color: #fff; margin: 0; font-size: 24px;">KolayAidat</h1>
+                    <p style="color: #94a3b8; margin: 4px 0 0; font-size: 14px;">Apartman Aidat Yönetimi</p>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding: 40px 32px;">
+                    <h2 style="color: #1e293b; margin: 0 0 16px; font-size: 20px;">Şifrenizi Sıfırlayın</h2>
+                    <p style="color: #475569; line-height: 1.6; margin: 0 0 12px;">
+                      Hesabınız için şifre sıfırlama talebinde bulundunuz.
+                    </p>
+                    <p style="color: #475569; line-height: 1.6; margin: 0 0 32px;">
+                      Aşağıdaki butona tıklayarak yeni şifrenizi belirleyebilirsiniz.
+                      Bu bağlantı <strong>1 saat</strong> geçerlidir.
+                    </p>
+                    <div style="text-align: center; margin-bottom: 32px;">
+                      <a href="${resetUrl}"
+                        style="background: #1e293b; color: #fff; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-size: 16px; font-weight: 600; display: inline-block;">
+                        Şifremi Sıfırla
+                      </a>
+                    </div>
+                    <p style="color: #94a3b8; font-size: 12px; margin: 0;">
+                      Butona tıklayamıyorsanız bu bağlantıyı tarayıcınıza yapıştırın:<br/>
+                      <a href="${resetUrl}" style="color: #3b82f6; word-break: break-all;">${resetUrl}</a>
+                    </p>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="background: #f8fafc; padding: 20px 32px; border-top: 1px solid #e2e8f0; text-align: center;">
+                    <p style="color: #94a3b8; font-size: 12px; margin: 0;">
+                      Bu talebi siz yapmadıysanız bu e-postayı görmezden gelebilirsiniz. Şifreniz değişmeyecektir.
+                    </p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </body>
+      </html>
+    `,
+  });
+}
+
 export async function sendPaymentStatusEmail({
   to,
   residentName,

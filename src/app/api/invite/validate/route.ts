@@ -5,7 +5,7 @@ import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 export async function GET(req: NextRequest) {
   // Rate limit: IP başına 20 sorgu/dakika
   const ip = getClientIp(req);
-  const { success, resetAt } = checkRateLimit(`invite-validate:${ip}`, 20, 60 * 1000);
+  const { success, resetAt } = checkRateLimit(`invite-validate:${ip}`, 100, 60 * 1000);
   if (!success) {
     return NextResponse.json(
       { error: "Çok fazla istek. Lütfen bir dakika bekleyin." },
