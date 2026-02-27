@@ -1,7 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
 export async function GET(req: NextRequest) {
+  // Rate limit: IP başına 20 sorgu/dakika
+  const ip = getClientIp(req);
+  const { success, resetAt } = checkRateLimit(`invite-validate:${ip}`, 20, 60 * 1000);
+  if (!success) {
+    return NextResponse.json(
+      { error: "Çok fazla istek. Lütfen bir dakika bekleyin." },
+      {
+        status: 429,
+        headers: { "Retry-After": String(Math.ceil((resetAt - Date.now()) / 1000)) },
+      }
+    );
+  }
+
   const token = req.nextUrl.searchParams.get("token");
 
   if (!token) {

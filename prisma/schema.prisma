@@ -69,6 +69,8 @@ model Session {
   expires      DateTime
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model VerificationToken {
@@ -90,6 +92,8 @@ model Apartment {
   manager User   @relation("ApartmentManager", fields: [managerId], references: [id])
   units   Unit[]
   dues    Due[]
+
+  @@index([managerId])
 }
 
 model Unit {
@@ -144,6 +148,9 @@ model Payment {
   resident User @relation(fields: [residentId], references: [id])
 
   @@unique([dueId, unitId])
+  @@index([residentId])
+  @@index([unitId])
+  @@index([status])
 }
 
 model Invite {
@@ -160,4 +167,7 @@ model Invite {
   unit        Unit  @relation(fields: [unitId], references: [id], onDelete: Cascade)
   invitedBy   User  @relation("InvitedBy", fields: [invitedById], references: [id])
   invitedUserRel User? @relation("InvitedUser", fields: [invitedUser], references: [id])
+
+  @@index([unitId])
+  @@index([email])
 }
