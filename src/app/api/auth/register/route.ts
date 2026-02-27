@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
 export async function POST(req: NextRequest) {
-  // Rate limit: IP başına 5 kayıt/saat
+  // Rate limit: IP başına 100 kayıt/saat
   const ip = getClientIp(req);
   const { success, resetAt } = checkRateLimit(`register:${ip}`, 100, 60 * 60 * 1000);
   if (!success) {

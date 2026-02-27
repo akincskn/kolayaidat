@@ -14,12 +14,23 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   });
   if (!apartment) return NextResponse.json({ error: "Apartman bulunamadı." }, { status: 404 });
 
-  const { email, unitId } = await req.json();
-  if (!email || !unitId) {
+  const body = await req.json();
+  const { unitId } = body;
+
+  // Tek email (eski format) veya çoklu email (yeni format) desteği
+  const rawEmails: string[] = Array.isArray(body.emails)
+    ? body.emails.map((e: string) => String(e).trim()).filter(Boolean)
+    : body.email
+    ? [String(body.email).trim()]
+    : [];
+
+  if (!rawEmails.length || !unitId) {
     return NextResponse.json({ error: "Email ve daire zorunludur." }, { status: 400 });
   }
 
-  // Check unit belongs to apartment
+  // Tekrarlı emailleri temizle
+  const emails = Array.from(new Set(rawEmails.map((e) => e.toLowerCase())));
+
   const unit = await prisma.unit.findFirst({
     where: { id: unitId, apartmentId: params.id },
   });
@@ -32,16 +43,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     );
   }
 
-  // Check if email is already a user
-  const existingUser = await prisma.user.findUnique({ where: { email } });
-  if (existingUser) {
-    return NextResponse.json(
-      { error: "Bu e-posta adresi zaten kayıtlı." },
-      { status: 409 }
-    );
-  }
-
-  // Cancel existing unused invites for this unit
+  // Mevcut kullanılmamış davetleri iptal et
   await prisma.invite.updateMany({
     where: { unitId, usedAt: null },
     data: { expiresAt: new Date() },
@@ -50,24 +52,44 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const expiresAt = new Date();
   expiresAt.setHours(expiresAt.getHours() + 48);
 
-  const invite = await prisma.invite.create({
-    data: { email, unitId, invitedById: session.user.id, expiresAt },
-  });
+  type InviteResult = { email: string; success: boolean; error?: string; inviteUrl?: string };
+  const results: InviteResult[] = [];
 
-  const inviteUrl = `${process.env.NEXTAUTH_URL}/invite?token=${invite.token}`;
+  for (const email of emails) {
+    const existingUser = await prisma.user.findUnique({ where: { email } });
+    if (existingUser) {
+      results.push({ email, success: false, error: "Bu e-posta zaten kayıtlı." });
+      continue;
+    }
 
-  try {
-    await sendInviteEmail({
-      to: email,
-      inviteUrl,
-      apartmentName: apartment.name,
-      unitNumber: unit.unitNumber,
-      invitedBy: session.user.name ?? "Yönetici",
-    });
-  } catch (err) {
-    console.error("[INVITE_EMAIL]", err);
-    // Silently fail email — invite is still created
+    try {
+      const invite = await prisma.invite.create({
+        data: { email, unitId, invitedById: session.user.id, expiresAt },
+      });
+      const inviteUrl = `${process.env.NEXTAUTH_URL}/invite?token=${invite.token}`;
+
+      try {
+        await sendInviteEmail({
+          to: email,
+          inviteUrl,
+          apartmentName: apartment.name,
+          unitNumber: unit.unitNumber,
+          invitedBy: session.user.name ?? "Yönetici",
+        });
+      } catch (err) {
+        console.error("[INVITE_EMAIL]", err);
+      }
+
+      results.push({ email, success: true, inviteUrl });
+    } catch (err) {
+      console.error("[INVITE_CREATE]", err);
+      results.push({ email, success: false, error: "Davet oluşturulamadı." });
+    }
   }
 
-  return NextResponse.json({ success: true, inviteUrl }, { status: 201 });
+  const firstSuccess = results.find((r) => r.success);
+  return NextResponse.json(
+    { success: results.some((r) => r.success), results, inviteUrl: firstSuccess?.inviteUrl },
+    { status: 201 }
+  );
 }

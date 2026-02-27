@@ -11,6 +11,12 @@ export default async function PaymentsPage({ params }: { params: { id: string } 
     where: { id: params.id, managerId: session.user.id },
     include: {
       dues: { orderBy: [{ year: "desc" }, { month: "desc" }] },
+      units: {
+        include: {
+          resident: { select: { id: true, name: true, email: true } },
+        },
+        orderBy: { unitNumber: "asc" },
+      },
     },
   });
   if (!apartment) notFound();
@@ -19,11 +25,17 @@ export default async function PaymentsPage({ params }: { params: { id: string } 
     where: { unit: { apartmentId: params.id } },
     include: {
       due: true,
-      unit: true,
+      unit: { select: { id: true, unitNumber: true } },
       resident: { select: { name: true, email: true } },
     },
     orderBy: { uploadedAt: "desc" },
   });
 
-  return <PaymentsManager apartment={apartment} initialPayments={payments} />;
+  return (
+    <PaymentsManager
+      apartment={apartment}
+      initialPayments={payments}
+      units={apartment.units}
+    />
+  );
 }

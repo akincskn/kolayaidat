@@ -355,6 +355,7 @@ export function PaymentTable({
                   title="Dekont"
                 />
               ) : (
+                // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={receiptModal}
                   alt="Dekont"

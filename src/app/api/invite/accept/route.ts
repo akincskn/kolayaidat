@@ -39,6 +39,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Daire başka biri tarafından doldurulduysa reddet (çoklu davet race condition)
+    if (invite.unit.residentId) {
+      return NextResponse.json(
+        { error: "Bu daire başka bir sakin tarafından dolduruldu." },
+        { status: 409 }
+      );
+    }
+
     if (invite.usedAt) {
       return NextResponse.json(
         { error: "Bu davet bağlantısı daha önce kullanılmış." },
