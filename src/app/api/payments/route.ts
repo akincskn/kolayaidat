@@ -1,70 +1,136 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { z } from "zod";
 import { prisma } from "@/lib/prisma";
+import { requireResident } from "@/lib/authz";
+import { firstZodError } from "@/lib/validations/lease";
 
-// Resident: kendi ödemelerini getirir
+/**
+ * Sakin: kendi aidat ve kira borçlarını + ödemelerini getirir.
+ *
+ * Kira borçları yalnızca sakinin kiracısı olduğu AKTİF sözleşmeden gelir;
+ * başka bir dairenin ya da geçmiş kiracının verisi hiçbir koşulda dönmez.
+ */
 export async function GET() {
-  const session = await auth();
-  if (!session?.user || session.user.role !== "RESIDENT") {
-    return NextResponse.json({ error: "Yetkisiz." }, { status: 401 });
-  }
+  const resident = await requireResident();
+  if (resident.error) return resident.error;
 
   const unit = await prisma.unit.findFirst({
-    where: { residentId: session.user.id },
+    where: { residentId: resident.data.id },
     include: { apartment: true },
   });
 
-  if (!unit) return NextResponse.json({ unit: null, payments: [], dues: [] });
+  if (!unit) {
+    return NextResponse.json({ unit: null, dues: [], rentCharges: [], payments: [] });
+  }
 
-  const dues = await prisma.due.findMany({
-    where: { apartmentId: unit.apartmentId },
-    orderBy: [{ year: "desc" }, { month: "desc" }],
-  });
+  const [dues, rentCharges, payments] = await Promise.all([
+    prisma.due.findMany({
+      where: { apartmentId: unit.apartmentId },
+      orderBy: [{ year: "desc" }, { month: "desc" }],
+    }),
+    prisma.rentCharge.findMany({
+      where: { unitId: unit.id, lease: { tenantId: resident.data.id } },
+      include: { lease: { select: { id: true, status: true, endDate: true } } },
+      orderBy: [{ year: "desc" }, { month: "desc" }],
+    }),
+    prisma.payment.findMany({
+      where: { unitId: unit.id },
+      include: { due: true, rentCharge: true },
+      orderBy: { uploadedAt: "desc" },
+    }),
+  ]);
 
-  const payments = await prisma.payment.findMany({
-    where: { unitId: unit.id },
-    include: { due: true },
-    orderBy: { uploadedAt: "desc" },
-  });
-
-  return NextResponse.json({ unit, dues, payments });
+  return NextResponse.json({ unit, dues, rentCharges, payments });
 }
 
-// Resident: dekont yükle (yeni payment oluştur)
-export async function POST(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user || session.user.role !== "RESIDENT") {
-    return NextResponse.json({ error: "Yetkisiz." }, { status: 401 });
-  }
+/**
+ * Sakin: dekont yükler.
+ *
+ * Aidat ve kira aynı endpoint'i paylaşır — tek fark hangi borç kaydına
+ * bağlandığıdır. Böylece dekont yükleme/tekrar yükleme mantığı tek kopyada kalır.
+ */
+const uploadSchema = z
+  .object({
+    type: z.enum(["AIDAT", "KIRA"]).default("AIDAT"),
+    dueId: z.string().min(1).optional(),
+    rentChargeId: z.string().min(1).optional(),
+    receiptUrl: z.string().url("Geçersiz dekont bağlantısı."),
+    receiptKey: z.string().nullish(),
+  })
+  .refine((v) => (v.type === "AIDAT" ? !!v.dueId : !!v.rentChargeId), {
+    message: "Ödeme yapılacak borç kaydı belirtilmelidir.",
+  });
 
-  const { dueId, receiptUrl, receiptKey } = await req.json();
-  if (!dueId || !receiptUrl) {
-    return NextResponse.json({ error: "Aidat ve dekont zorunludur." }, { status: 400 });
+export async function POST(req: NextRequest) {
+  const resident = await requireResident();
+  if (resident.error) return resident.error;
+
+  const parsed = uploadSchema.safeParse(await req.json().catch(() => null));
+  if (!parsed.success) {
+    return NextResponse.json({ error: firstZodError(parsed.error) }, { status: 400 });
   }
+  const { type, receiptUrl, receiptKey } = parsed.data;
 
   const unit = await prisma.unit.findFirst({
-    where: { residentId: session.user.id },
+    where: { residentId: resident.data.id },
+    select: { id: true, apartmentId: true },
   });
   if (!unit) return NextResponse.json({ error: "Daire bulunamadı." }, { status: 404 });
 
-  const due = await prisma.due.findUnique({ where: { id: dueId } });
-  if (!due || due.apartmentId !== unit.apartmentId) {
-    return NextResponse.json({ error: "Aidat bulunamadı." }, { status: 404 });
+  // Borç kaydını doğrula ve mevcut ödemeyi bul — iki tür için de aynı sözleşme.
+  let where: { dueId_unitId: { dueId: string; unitId: string } } | {
+    rentChargeId_unitId: { rentChargeId: string; unitId: string };
+  };
+  let link: { dueId: string; rentChargeId: null } | { dueId: null; rentChargeId: string };
+
+  if (type === "AIDAT") {
+    const dueId = parsed.data.dueId!;
+    const due = await prisma.due.findUnique({ where: { id: dueId } });
+    if (!due || due.apartmentId !== unit.apartmentId) {
+      return NextResponse.json({ error: "Aidat bulunamadı." }, { status: 404 });
+    }
+    where = { dueId_unitId: { dueId, unitId: unit.id } };
+    link = { dueId, rentChargeId: null };
+  } else {
+    const rentChargeId = parsed.data.rentChargeId!;
+    const charge = await prisma.rentCharge.findFirst({
+      where: {
+        id: rentChargeId,
+        unitId: unit.id,
+        lease: { tenantId: resident.data.id },
+      },
+      select: { id: true, lease: { select: { status: true } } },
+    });
+    if (!charge) {
+      return NextResponse.json({ error: "Kira borcu bulunamadı." }, { status: 404 });
+    }
+    if (charge.lease.status === "CANCELLED") {
+      return NextResponse.json(
+        { error: "İptal edilmiş sözleşme için ödeme yapılamaz." },
+        { status: 400 }
+      );
+    }
+    where = { rentChargeId_unitId: { rentChargeId, unitId: unit.id } };
+    link = { dueId: null, rentChargeId };
   }
 
-  // Check existing payment
-  const existing = await prisma.payment.findUnique({
-    where: { dueId_unitId: { dueId, unitId: unit.id } },
-  });
+  const label = type === "KIRA" ? "kira" : "aidat";
+  const existing = await prisma.payment.findUnique({ where });
 
   if (existing) {
     if (existing.status === "APPROVED") {
-      return NextResponse.json({ error: "Bu aidat zaten onaylanmış." }, { status: 400 });
+      return NextResponse.json(
+        { error: `Bu ${label} zaten onaylanmış.` },
+        { status: 400 }
+      );
     }
     if (existing.status === "PENDING") {
-      return NextResponse.json({ error: "Dekontunuz inceleniyor, bekleyiniz." }, { status: 400 });
+      return NextResponse.json(
+        { error: "Dekontunuz inceleniyor, bekleyiniz." },
+        { status: 400 }
+      );
     }
-    // REJECTED: replace
+    // REJECTED: aynı kayıt yeni dekontla tekrar incelemeye alınır.
     const updated = await prisma.payment.update({
       where: { id: existing.id },
       data: {
@@ -75,21 +141,22 @@ export async function POST(req: NextRequest) {
         uploadedAt: new Date(),
         reviewedAt: null,
       },
-      include: { due: true },
+      include: { due: true, rentCharge: true },
     });
     return NextResponse.json(updated);
   }
 
   const payment = await prisma.payment.create({
     data: {
-      dueId,
+      type,
+      ...link,
       unitId: unit.id,
-      residentId: session.user.id,
+      residentId: resident.data.id,
       receiptUrl,
       receiptKey: receiptKey || null,
       status: "PENDING",
     },
-    include: { due: true },
+    include: { due: true, rentCharge: true },
   });
 
   return NextResponse.json(payment, { status: 201 });

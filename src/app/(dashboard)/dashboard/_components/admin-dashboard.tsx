@@ -1,23 +1,40 @@
 import Link from "next/link";
-import { Building2, Users, CheckCircle, Clock, XCircle, Plus, ArrowRight } from "lucide-react";
+import {
+  Building2,
+  Users,
+  CheckCircle,
+  Clock,
+  XCircle,
+  Plus,
+  ArrowRight,
+  Wallet,
+  PiggyBank,
+  AlertTriangle,
+} from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { formatTRY, MONTHS_TR } from "@/lib/constants";
+import { daysUntil } from "@/lib/lease";
 
-const MONTHS_TR = [
-  "",
-  "Ocak",
-  "Şubat",
-  "Mart",
-  "Nisan",
-  "Mayıs",
-  "Haziran",
-  "Temmuz",
-  "Ağustos",
-  "Eylül",
-  "Ekim",
-  "Kasım",
-  "Aralık",
-];
+/** Apartmanın kira tarafı özeti (dashboard/page.tsx içinde hesaplanır). */
+export type RentSummary = {
+  activeLeaseCount: number;
+  monthlyRentTotal: number;
+  heldDepositTotal: number;
+  month: number;
+  year: number;
+  /** Bu ay beklenen toplam kira. */
+  expected: number;
+  /** Bu ay onaylanmış dekontlarla tahsil edilen kira. */
+  collected: number;
+  pendingCount: number;
+  expiringLeases: {
+    id: string;
+    unitNumber: string;
+    tenantName: string | null;
+    endDate: string;
+  }[];
+} | null;
 
 type Apartment = {
   id: string;
@@ -30,7 +47,9 @@ type Apartment = {
     payments: {
       id: string;
       status: string;
-      due: { month: number; year: number; amount: number };
+      // Sorgu type: "AIDAT" ile filtrelendiği için pratikte doludur; Prisma
+      // tipinde nullable olduğundan burada da nullable tutulur.
+      due: { month: number; year: number; amount: number } | null;
     }[];
   }[];
   dues: { month: number; year: number; amount: number }[];
@@ -59,7 +78,7 @@ function getStats(apartment: NonNullable<Apartment>) {
   for (const unit of apartment.units) {
     if (!unit.resident) continue;
     const payment = unit.payments.find(
-      (p) => p.due.month === latestDue.month && p.due.year === latestDue.year
+      (p) => p.due?.month === latestDue.month && p.due?.year === latestDue.year
     );
     if (!payment) {
       // no payment
@@ -72,14 +91,22 @@ function getStats(apartment: NonNullable<Apartment>) {
   return { totalUnits, occupiedUnits, approved, pending, rejected, unpaid, latestDue };
 }
 
-export function AdminDashboard({ apartment }: { apartment: Apartment }) {
+export function AdminDashboard({
+  apartment,
+  rent,
+}: {
+  apartment: Apartment;
+  rent: RentSummary;
+}) {
   if (!apartment) {
     return (
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold text-slate-800">Genel Bakış</h1>
-            <p className="text-slate-500 text-base">Apartmanınıza genel bakış</p>
+            <p className="text-slate-500 text-base">
+              Aidat ve kira takibinize genel bakış
+            </p>
           </div>
           <Button asChild size="lg">
             <Link href="/apartments/new">
@@ -172,6 +199,103 @@ export function AdminDashboard({ apartment }: { apartment: Apartment }) {
         </Card>
       </div>
 
+      {/* Kira özeti — kira sözleşmesi yoksa hiç gösterilmez, aidat-only
+          kullanıcılar için arayüz aynen eskisi gibi kalır. */}
+      {rent && rent.activeLeaseCount > 0 && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <h2 className="text-lg font-semibold text-slate-700">
+              Kira — {MONTHS_TR[rent.month]} {rent.year}
+            </h2>
+            <Button asChild variant="outline" size="sm">
+              <Link href={`/apartments/${apartment.id}?tab=kira`}>
+                Sözleşmeleri Yönet <ArrowRight className="w-4 h-4 ml-1" />
+              </Link>
+            </Button>
+          </div>
+
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <StatCard
+              title="Aylık Kira Geliri"
+              icon={<Wallet className="w-6 h-6 text-blue-500" />}
+              value={formatTRY(rent.monthlyRentTotal)}
+              valueClassName="text-xl font-bold text-slate-800"
+              hint={`${rent.activeLeaseCount} aktif sözleşme`}
+            />
+            <StatCard
+              title="Bu Ay Tahsil Edilen"
+              icon={<CheckCircle className="w-6 h-6 text-green-500" />}
+              value={formatTRY(rent.collected)}
+              valueClassName="text-xl font-bold text-green-600"
+              hint={`Beklenen ${formatTRY(rent.expected)}`}
+            />
+            <StatCard
+              title="Bekleyen Kira Dekontu"
+              icon={<Clock className="w-6 h-6 text-amber-400" />}
+              value={String(rent.pendingCount)}
+              valueClassName="text-3xl font-bold text-amber-600"
+            />
+            <StatCard
+              title="Elde Tutulan Depozito"
+              icon={<PiggyBank className="w-6 h-6 text-slate-400" />}
+              value={formatTRY(rent.heldDepositTotal)}
+              valueClassName="text-xl font-bold text-slate-800"
+            />
+          </div>
+
+          {/* Sözleşme bitiş uyarıları */}
+          {rent.expiringLeases.length > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-2">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5 text-amber-600" />
+                <p className="font-semibold text-amber-800">
+                  Süresi Yaklaşan Kira Sözleşmeleri
+                </p>
+              </div>
+              <ul className="space-y-1.5">
+                {rent.expiringLeases.map((lease) => {
+                  const remaining = daysUntil(lease.endDate);
+                  return (
+                    <li
+                      key={lease.id}
+                      className="flex items-center justify-between gap-3 flex-wrap text-sm"
+                    >
+                      <span className="text-amber-900">
+                        <strong>Daire {lease.unitNumber}</strong>
+                        {lease.tenantName ? ` — ${lease.tenantName}` : ""} ·{" "}
+                        {new Date(lease.endDate).toLocaleDateString("tr-TR")} tarihinde
+                        bitiyor
+                      </span>
+                      <span className="flex items-center gap-2">
+                        <span
+                          className={
+                            remaining < 0
+                              ? "font-semibold text-red-700"
+                              : "font-semibold text-amber-800"
+                          }
+                        >
+                          {remaining < 0
+                            ? `${Math.abs(remaining)} gün önce doldu`
+                            : remaining === 0
+                              ? "Bugün sona eriyor"
+                              : `${remaining} gün kaldı`}
+                        </span>
+                        <Link
+                          href={`/apartments/${apartment.id}/leases/${lease.id}`}
+                          className="text-blue-700 underline"
+                        >
+                          Görüntüle
+                        </Link>
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Current month due info */}
       {stats.latestDue && (
         <div className="bg-slate-800 text-white rounded-xl p-5 flex flex-wrap gap-4 items-center justify-between">
@@ -226,7 +350,8 @@ export function AdminDashboard({ apartment }: { apartment: Apartment }) {
                   const payment = latestDue
                     ? unit.payments.find(
                         (p) =>
-                          p.due.month === latestDue.month && p.due.year === latestDue.year
+                          p.due?.month === latestDue.month &&
+                          p.due?.year === latestDue.year
                       )
                     : undefined;
 
@@ -272,5 +397,35 @@ export function AdminDashboard({ apartment }: { apartment: Apartment }) {
         )}
       </div>
     </div>
+  );
+}
+
+/** Dashboard'daki özet kartı — aidat ve kira blokları aynı bileşeni kullanır. */
+function StatCard({
+  title,
+  icon,
+  value,
+  valueClassName,
+  hint,
+}: {
+  title: string;
+  icon: React.ReactNode;
+  value: string;
+  valueClassName: string;
+  hint?: string;
+}) {
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-medium text-slate-500">{title}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="flex items-center gap-2">
+          {icon}
+          <span className={valueClassName}>{value}</span>
+        </div>
+        {hint && <p className="text-xs text-slate-400 mt-1">{hint}</p>}
+      </CardContent>
+    </Card>
   );
 }

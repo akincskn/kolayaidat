@@ -3,7 +3,17 @@
 import { useState } from "react";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { toast } from "sonner";
-import { CheckCircle, Clock, XCircle, ExternalLink, Check, X as XIcon, Plus } from "lucide-react";
+import {
+  CheckCircle,
+  Clock,
+  XCircle,
+  ExternalLink,
+  Check,
+  X as XIcon,
+  Plus,
+  KeyRound,
+  ChevronRight,
+} from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -15,22 +25,10 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import { SegmentedTabs } from "@/components/ui/segmented-tabs";
+import { formatTRY, MONTHS_TR } from "@/lib/constants";
 
-const MONTHS_TR = [
-  "",
-  "Ocak",
-  "Şubat",
-  "Mart",
-  "Nisan",
-  "Mayıs",
-  "Haziran",
-  "Temmuz",
-  "Ağustos",
-  "Eylül",
-  "Ekim",
-  "Kasım",
-  "Aralık",
-];
+type Period = { month: number; year: number };
 
 type Due = {
   id: string;
@@ -60,86 +58,126 @@ type Payment = {
   resident: { id: string; name: string; email: string };
 };
 
+type RentCharge = {
+  id: string;
+  leaseId: string;
+  leaseStatus: string;
+  unitNumber: string;
+  tenant: { id: string; name: string; email: string } | null;
+  amount: number;
+  month: number;
+  year: number;
+  dueDate: string;
+  payment: {
+    id: string;
+    status: string;
+    receiptUrl: string | null;
+    rejectionReason: string | null;
+  } | null;
+};
+
+export type PaymentTypeFilter = "ALL" | "AIDAT" | "KIRA";
+
 interface PaymentTableProps {
   apartment: { id: string; name: string };
-  dues: Due[];
+  periods: Period[];
+  selectedPeriod: Period;
   selectedDue: Due | null;
   payments: Payment[];
   units: Unit[];
+  rentCharges: RentCharge[];
+  typeFilter: PaymentTypeFilter;
 }
 
 export function PaymentTable({
   apartment,
-  dues,
+  periods,
+  selectedPeriod,
   selectedDue,
   payments: initialPayments,
   units,
+  rentCharges: initialRentCharges,
+  typeFilter,
 }: PaymentTableProps) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
   const [payments, setPayments] = useState(initialPayments);
+  const [rentCharges, setRentCharges] = useState(initialRentCharges);
   const [processing, setProcessing] = useState<string | null>(null);
-  const [rejectDialog, setRejectDialog] = useState<{ paymentId: string } | null>(null);
+  const [rejectDialog, setRejectDialog] = useState<{
+    paymentId: string;
+    kind: "AIDAT" | "KIRA";
+  } | null>(null);
   const [rejectReason, setRejectReason] = useState("");
   const [receiptModal, setReceiptModal] = useState<string | null>(null);
 
-  function selectMonth(due: Due) {
+  function pushParams(next: Record<string, string>) {
     const params = new URLSearchParams(searchParams.toString());
     params.set("apt", apartment.id);
-    params.set("month", String(due.month));
-    params.set("year", String(due.year));
+    Object.entries(next).forEach(([k, v]) => params.set(k, v));
     router.push(`${pathname}?${params.toString()}`);
   }
 
-  async function handleApprove(paymentId: string) {
+  const selectPeriod = (p: Period) =>
+    pushParams({ month: String(p.month), year: String(p.year) });
+
+  const selectType = (t: PaymentTypeFilter) => pushParams({ tur: t });
+
+  /** Aidat ve kira dekontları aynı endpoint üzerinden onaylanır/reddedilir. */
+  async function review(
+    paymentId: string,
+    kind: "AIDAT" | "KIRA",
+    action: "approve" | "reject",
+    reason?: string
+  ) {
     setProcessing(paymentId);
     try {
       const res = await fetch(`/api/payments/${paymentId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "approve" }),
+        body: JSON.stringify({
+          action,
+          ...(action === "reject" ? { rejectionReason: reason } : {}),
+        }),
       });
-      if (!res.ok) throw new Error();
-      setPayments((prev) =>
-        prev.map((p) => (p.id === paymentId ? { ...p, status: "APPROVED" } : p))
-      );
-      toast.success("Ödeme onaylandı.");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.error ?? "İşlem başarısız.");
+        return;
+      }
+
+      const status = action === "approve" ? "APPROVED" : "REJECTED";
+      const rejectionReason = action === "reject" ? (reason ?? null) : null;
+
+      if (kind === "AIDAT") {
+        setPayments((prev) =>
+          prev.map((p) => (p.id === paymentId ? { ...p, status, rejectionReason } : p))
+        );
+      } else {
+        setRentCharges((prev) =>
+          prev.map((c) =>
+            c.payment?.id === paymentId
+              ? { ...c, payment: { ...c.payment, status, rejectionReason } }
+              : c
+          )
+        );
+      }
+
+      toast.success(action === "approve" ? "Ödeme onaylandı." : "Ödeme reddedildi.");
+      setRejectDialog(null);
+      setRejectReason("");
     } catch {
-      toast.error("İşlem başarısız.");
+      toast.error("Bağlantı hatası oluştu.");
     } finally {
       setProcessing(null);
     }
   }
 
-  async function handleReject(paymentId: string) {
-    if (!rejectReason.trim()) {
-      toast.error("Red sebebi giriniz.");
-      return;
-    }
-    setProcessing(paymentId);
-    try {
-      const res = await fetch(`/api/payments/${paymentId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "reject", rejectionReason: rejectReason }),
-      });
-      if (!res.ok) throw new Error();
-      const reason = rejectReason;
-      setPayments((prev) =>
-        prev.map((p) =>
-          p.id === paymentId ? { ...p, status: "REJECTED", rejectionReason: reason } : p
-        )
-      );
-      toast.success("Ödeme reddedildi.");
-      setRejectDialog(null);
-      setRejectReason("");
-    } catch {
-      toast.error("İşlem başarısız.");
-    } finally {
-      setProcessing(null);
-    }
+  function openReject(paymentId: string, kind: "AIDAT" | "KIRA") {
+    setRejectDialog({ paymentId, kind });
+    setRejectReason("");
   }
 
   const paymentMap = new Map(payments.map((p) => [p.unitId, p]));
@@ -147,6 +185,14 @@ export function PaymentTable({
   const approvedCount = payments.filter((p) => p.status === "APPROVED").length;
   const pendingCount = payments.filter((p) => p.status === "PENDING").length;
   const unpaidCount = units.filter((u) => u.resident && !paymentMap.has(u.id)).length;
+
+  const rentApproved = rentCharges.filter((c) => c.payment?.status === "APPROVED");
+  const rentPending = rentCharges.filter((c) => c.payment?.status === "PENDING");
+  const rentTotal = rentCharges.reduce((sum, c) => sum + c.amount, 0);
+  const rentCollected = rentApproved.reduce((sum, c) => sum + c.amount, 0);
+
+  const showAidat = typeFilter === "ALL" || typeFilter === "AIDAT";
+  const showKira = typeFilter === "ALL" || typeFilter === "KIRA";
 
   return (
     <div className="space-y-6">
@@ -156,28 +202,48 @@ export function PaymentTable({
           <h1 className="text-2xl font-bold text-slate-800">Ödemeler</h1>
           <p className="text-slate-500 text-base mt-1">{apartment.name}</p>
         </div>
-        <Button asChild size="lg" variant="outline">
-          <Link href={`/apartments/${apartment.id}/dues`}>
-            <Plus className="w-5 h-5 mr-2" /> Yeni Aidat Tanımla
-          </Link>
-        </Button>
+        <div className="flex gap-2 flex-wrap">
+          <Button asChild size="lg" variant="outline">
+            <Link href={`/apartments/${apartment.id}/dues`}>
+              <Plus className="w-5 h-5 mr-2" /> Yeni Aidat Tanımla
+            </Link>
+          </Button>
+          <Button asChild size="lg" variant="outline">
+            <Link href={`/apartments/${apartment.id}/leases/new`}>
+              <KeyRound className="w-5 h-5 mr-2" /> Yeni Kira Sözleşmesi
+            </Link>
+          </Button>
+        </div>
       </div>
 
-      {dues.length === 0 ? (
+      {/* Tür filtresi */}
+      <SegmentedTabs
+        ariaLabel="Ödeme türü filtresi"
+        value={typeFilter}
+        onChange={selectType}
+        items={[
+          { value: "ALL", label: "Tümü" },
+          { value: "AIDAT", label: "Aidat", count: payments.length },
+          { value: "KIRA", label: "Kira", count: rentCharges.length },
+        ]}
+      />
+
+      {periods.length === 0 ? (
         <div className="bg-white rounded-xl p-10 text-center text-slate-400 border text-base">
-          Bu apartman için henüz aidat tanımlanmadı.
+          Bu apartman için henüz aidat veya kira tanımlanmadı.
         </div>
       ) : (
         <>
-          {/* Month tabs */}
+          {/* Dönem sekmeleri (aidat + kira ortak) */}
           <div className="flex flex-wrap gap-2">
-            {dues.map((due) => {
+            {periods.map((period) => {
               const isSelected =
-                selectedDue?.month === due.month && selectedDue?.year === due.year;
+                selectedPeriod.month === period.month &&
+                selectedPeriod.year === period.year;
               return (
                 <button
-                  key={due.id}
-                  onClick={() => selectMonth(due)}
+                  key={`${period.year}-${period.month}`}
+                  onClick={() => selectPeriod(period)}
                   className={cn(
                     "px-4 py-2 rounded-lg text-base font-medium transition-colors min-h-[44px] border",
                     isSelected
@@ -185,158 +251,248 @@ export function PaymentTable({
                       : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
                   )}
                 >
-                  {MONTHS_TR[due.month]} {due.year}
+                  {MONTHS_TR[period.month]} {period.year}
                 </button>
               );
             })}
           </div>
 
-          {/* Due info + stats */}
-          {selectedDue && (
-            <div className="bg-white rounded-xl border p-5">
-              <div className="flex flex-wrap gap-6 items-start">
-                <div>
-                  <p className="text-sm text-slate-500">Aidat Tutarı</p>
-                  <p className="text-2xl font-bold text-slate-800">
-                    {selectedDue.amount.toLocaleString("tr-TR")} ₺
-                  </p>
+          {/* ---------------- AİDAT ---------------- */}
+          {showAidat && (
+            <section className="space-y-4">
+              {typeFilter === "ALL" && (
+                <h2 className="text-lg font-semibold text-slate-700">Aidat</h2>
+              )}
+
+              {!selectedDue ? (
+                <div className="bg-white rounded-xl p-8 text-center text-slate-400 border text-base">
+                  {MONTHS_TR[selectedPeriod.month]} {selectedPeriod.year} için aidat
+                  tanımlanmadı.
                 </div>
-                <div>
-                  <p className="text-sm text-slate-500">Son Ödeme Tarihi</p>
-                  <p className="text-base font-semibold text-slate-700">
-                    {new Date(selectedDue.dueDate).toLocaleDateString("tr-TR")}
-                  </p>
-                </div>
-                {selectedDue.description && (
-                  <div>
-                    <p className="text-sm text-slate-500">Not</p>
-                    <p className="text-base text-slate-700">{selectedDue.description}</p>
+              ) : (
+                <>
+                  <div className="bg-white rounded-xl border p-5">
+                    <div className="flex flex-wrap gap-6 items-start">
+                      <div>
+                        <p className="text-sm text-slate-500">Aidat Tutarı</p>
+                        <p className="text-2xl font-bold text-slate-800">
+                          {formatTRY(selectedDue.amount)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-slate-500">Son Ödeme Tarihi</p>
+                        <p className="text-base font-semibold text-slate-700">
+                          {new Date(selectedDue.dueDate).toLocaleDateString("tr-TR")}
+                        </p>
+                      </div>
+                      {selectedDue.description && (
+                        <div>
+                          <p className="text-sm text-slate-500">Not</p>
+                          <p className="text-base text-slate-700">
+                            {selectedDue.description}
+                          </p>
+                        </div>
+                      )}
+                      <div className="ml-auto flex gap-2 flex-wrap items-center">
+                        <span className="text-sm font-medium text-green-700 bg-green-50 px-3 py-1.5 rounded-full">
+                          ✅ {approvedCount} Onaylı
+                        </span>
+                        <span className="text-sm font-medium text-amber-700 bg-amber-50 px-3 py-1.5 rounded-full">
+                          ⏳ {pendingCount} Beklemede
+                        </span>
+                        <span className="text-sm font-medium text-red-700 bg-red-50 px-3 py-1.5 rounded-full">
+                          ❌ {unpaidCount} Yüklenmedi
+                        </span>
+                      </div>
+                    </div>
                   </div>
-                )}
-                <div className="ml-auto flex gap-2 flex-wrap items-center">
-                  <span className="text-sm font-medium text-green-700 bg-green-50 px-3 py-1.5 rounded-full">
-                    ✅ {approvedCount} Onaylı
-                  </span>
-                  <span className="text-sm font-medium text-amber-700 bg-amber-50 px-3 py-1.5 rounded-full">
-                    ⏳ {pendingCount} Beklemede
-                  </span>
-                  <span className="text-sm font-medium text-red-700 bg-red-50 px-3 py-1.5 rounded-full">
-                    ❌ {unpaidCount} Yüklenmedi
-                  </span>
-                </div>
-              </div>
-            </div>
+
+                  <div className="bg-white rounded-xl border overflow-hidden">
+                    <div className="overflow-x-auto">
+                      <table className="w-full">
+                        <thead>
+                          <tr className="border-b bg-slate-50">
+                            <Th>Daire</Th>
+                            <Th>Sakin</Th>
+                            <Th>Durum</Th>
+                            <Th>Dekont</Th>
+                            <Th>İşlem</Th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {units.map((unit) => {
+                            const payment = paymentMap.get(unit.id);
+                            return (
+                              <tr key={unit.id} className="border-b last:border-0 h-14">
+                                <td className="px-5 py-3 font-semibold text-slate-800 text-base whitespace-nowrap">
+                                  Daire {unit.unitNumber}
+                                </td>
+                                <td className="px-5 py-3 text-base text-slate-700">
+                                  {unit.resident?.name ?? (
+                                    <span className="text-slate-400 text-sm">—</span>
+                                  )}
+                                </td>
+                                <td className="px-5 py-3">
+                                  <StatusBadge payment={payment} unit={unit} />
+                                  {payment?.status === "REJECTED" &&
+                                    payment.rejectionReason && (
+                                      <p
+                                        className="text-xs text-red-500 mt-1 max-w-[180px]"
+                                        title={payment.rejectionReason}
+                                      >
+                                        {payment.rejectionReason.length > 45
+                                          ? payment.rejectionReason.slice(0, 45) + "…"
+                                          : payment.rejectionReason}
+                                      </p>
+                                    )}
+                                </td>
+                                <td className="px-5 py-3">
+                                  <ReceiptCell
+                                    url={payment?.receiptUrl ?? null}
+                                    onOpen={setReceiptModal}
+                                  />
+                                </td>
+                                <td className="px-5 py-3">
+                                  <ReviewCell
+                                    paymentId={
+                                      payment?.status === "PENDING" ? payment.id : null
+                                    }
+                                    disabled={!!processing}
+                                    onApprove={(id) => review(id, "AIDAT", "approve")}
+                                    onReject={(id) => openReject(id, "AIDAT")}
+                                  />
+                                </td>
+                              </tr>
+                            );
+                          })}
+
+                          {units.length === 0 && (
+                            <EmptyRow colSpan={5}>
+                              Bu apartmanda henüz daire yok.
+                            </EmptyRow>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </>
+              )}
+            </section>
           )}
 
-          {/* Table */}
-          <div className="bg-white rounded-xl border overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b bg-slate-50">
-                    <th className="text-left px-5 py-3 text-sm font-semibold text-slate-600">
-                      Daire
-                    </th>
-                    <th className="text-left px-5 py-3 text-sm font-semibold text-slate-600">
-                      Sakin
-                    </th>
-                    <th className="text-left px-5 py-3 text-sm font-semibold text-slate-600">
-                      Durum
-                    </th>
-                    <th className="text-left px-5 py-3 text-sm font-semibold text-slate-600">
-                      Dekont
-                    </th>
-                    <th className="text-left px-5 py-3 text-sm font-semibold text-slate-600">
-                      İşlem
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {units.map((unit) => {
-                    const payment = paymentMap.get(unit.id);
-                    return (
-                      <tr key={unit.id} className="border-b last:border-0 h-14">
-                        <td className="px-5 py-3 font-semibold text-slate-800 text-base whitespace-nowrap">
-                          Daire {unit.unitNumber}
-                        </td>
-                        <td className="px-5 py-3 text-base text-slate-700">
-                          {unit.resident?.name ?? (
-                            <span className="text-slate-400 text-sm">—</span>
-                          )}
-                        </td>
-                        <td className="px-5 py-3">
-                          <StatusBadge payment={payment} unit={unit} />
-                          {payment?.status === "REJECTED" && payment.rejectionReason && (
-                            <p
-                              className="text-xs text-red-500 mt-1 max-w-[180px]"
-                              title={payment.rejectionReason}
-                            >
-                              {payment.rejectionReason.length > 45
-                                ? payment.rejectionReason.slice(0, 45) + "…"
-                                : payment.rejectionReason}
-                            </p>
-                          )}
-                        </td>
-                        <td className="px-5 py-3">
-                          {payment?.receiptUrl ? (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="min-h-[40px] text-sm gap-1.5"
-                              onClick={() => setReceiptModal(payment.receiptUrl!)}
-                            >
-                              <ExternalLink className="w-4 h-4" /> Görüntüle
-                            </Button>
-                          ) : (
-                            <span className="text-slate-400 text-sm">—</span>
-                          )}
-                        </td>
-                        <td className="px-5 py-3">
-                          {payment?.status === "PENDING" ? (
-                            <div className="flex gap-2">
-                              <Button
-                                size="sm"
-                                className="min-h-[40px] bg-green-600 hover:bg-green-700 text-white gap-1.5"
-                                disabled={processing === payment.id}
-                                onClick={() => handleApprove(payment.id)}
-                              >
-                                <Check className="w-4 h-4" /> Onayla
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="min-h-[40px] text-red-600 border-red-200 hover:bg-red-50 gap-1.5"
-                                disabled={processing === payment.id}
-                                onClick={() => {
-                                  setRejectDialog({ paymentId: payment.id });
-                                  setRejectReason("");
-                                }}
-                              >
-                                <XIcon className="w-4 h-4" /> Reddet
-                              </Button>
-                            </div>
-                          ) : (
-                            <span className="text-slate-400 text-sm">—</span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
+          {/* ---------------- KİRA ---------------- */}
+          {showKira && (
+            <section className="space-y-4">
+              {typeFilter === "ALL" && (
+                <h2 className="text-lg font-semibold text-slate-700">Kira</h2>
+              )}
 
-                  {units.length === 0 && (
-                    <tr>
-                      <td
-                        colSpan={5}
-                        className="px-5 py-10 text-center text-slate-400 text-base"
-                      >
-                        Bu apartmanda henüz daire yok.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
+              {rentCharges.length === 0 ? (
+                <div className="bg-white rounded-xl p-8 text-center text-slate-400 border text-base">
+                  {MONTHS_TR[selectedPeriod.month]} {selectedPeriod.year} için kira borcu
+                  yok.
+                </div>
+              ) : (
+                <>
+                  <div className="bg-white rounded-xl border p-5">
+                    <div className="flex flex-wrap gap-6 items-start">
+                      <div>
+                        <p className="text-sm text-slate-500">Beklenen Kira</p>
+                        <p className="text-2xl font-bold text-slate-800">
+                          {formatTRY(rentTotal)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-slate-500">Tahsil Edilen</p>
+                        <p className="text-2xl font-bold text-green-600">
+                          {formatTRY(rentCollected)}
+                        </p>
+                      </div>
+                      <div className="ml-auto flex gap-2 flex-wrap items-center">
+                        <span className="text-sm font-medium text-green-700 bg-green-50 px-3 py-1.5 rounded-full">
+                          ✅ {rentApproved.length} Onaylı
+                        </span>
+                        <span className="text-sm font-medium text-amber-700 bg-amber-50 px-3 py-1.5 rounded-full">
+                          ⏳ {rentPending.length} Beklemede
+                        </span>
+                        <span className="text-sm font-medium text-red-700 bg-red-50 px-3 py-1.5 rounded-full">
+                          ❌ {rentCharges.length - rentApproved.length - rentPending.length}{" "}
+                          Yüklenmedi
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-white rounded-xl border overflow-hidden">
+                    <div className="overflow-x-auto">
+                      <table className="w-full">
+                        <thead>
+                          <tr className="border-b bg-slate-50">
+                            <Th>Daire</Th>
+                            <Th>Kiracı</Th>
+                            <Th>Tutar</Th>
+                            <Th>Durum</Th>
+                            <Th>Dekont</Th>
+                            <Th>İşlem</Th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rentCharges.map((charge) => (
+                            <tr key={charge.id} className="border-b last:border-0 h-14">
+                              <td className="px-5 py-3 font-semibold text-slate-800 text-base whitespace-nowrap">
+                                <Link
+                                  href={`/apartments/${apartment.id}/leases/${charge.leaseId}`}
+                                  className="hover:underline inline-flex items-center"
+                                >
+                                  Daire {charge.unitNumber}
+                                  <ChevronRight className="w-4 h-4 text-slate-400" />
+                                </Link>
+                              </td>
+                              <td className="px-5 py-3 text-base text-slate-700">
+                                {charge.tenant?.name ?? (
+                                  <span className="text-slate-400 text-sm">—</span>
+                                )}
+                              </td>
+                              <td className="px-5 py-3 text-base text-slate-700 whitespace-nowrap">
+                                {formatTRY(charge.amount)}
+                              </td>
+                              <td className="px-5 py-3">
+                                <RentStatusBadge charge={charge} />
+                                {charge.payment?.status === "REJECTED" &&
+                                  charge.payment.rejectionReason && (
+                                    <p className="text-xs text-red-500 mt-1 max-w-[180px]">
+                                      {charge.payment.rejectionReason}
+                                    </p>
+                                  )}
+                              </td>
+                              <td className="px-5 py-3">
+                                <ReceiptCell
+                                  url={charge.payment?.receiptUrl ?? null}
+                                  onOpen={setReceiptModal}
+                                />
+                              </td>
+                              <td className="px-5 py-3">
+                                <ReviewCell
+                                  paymentId={
+                                    charge.payment?.status === "PENDING"
+                                      ? charge.payment.id
+                                      : null
+                                  }
+                                  disabled={!!processing}
+                                  onApprove={(id) => review(id, "KIRA", "approve")}
+                                  onReject={(id) => openReject(id, "KIRA")}
+                                />
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </>
+              )}
+            </section>
+          )}
         </>
       )}
 
@@ -378,18 +534,18 @@ export function PaymentTable({
       </Dialog>
 
       {/* Reject dialog */}
-      <Dialog
-        open={!!rejectDialog}
-        onOpenChange={(o) => {
-          if (!o) setRejectDialog(null);
-        }}
-      >
+      <Dialog open={!!rejectDialog} onOpenChange={(o) => !o && setRejectDialog(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Ödemeyi Reddet</DialogTitle>
+            <DialogTitle>
+              {rejectDialog?.kind === "KIRA" ? "Kira Ödemesini" : "Aidat Ödemesini"}{" "}
+              Reddet
+            </DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
-            <p className="text-base text-slate-600">Red sebebi sakinle paylaşılacaktır.</p>
+            <p className="text-base text-slate-600">
+              Red sebebi ilgili kişiyle paylaşılacaktır.
+            </p>
             <Textarea
               placeholder="Red sebebini yazın..."
               value={rejectReason}
@@ -408,7 +564,10 @@ export function PaymentTable({
             </Button>
             <Button
               variant="destructive"
-              onClick={() => rejectDialog && handleReject(rejectDialog.paymentId)}
+              onClick={() =>
+                rejectDialog &&
+                review(rejectDialog.paymentId, rejectDialog.kind, "reject", rejectReason)
+              }
               disabled={!!processing || !rejectReason.trim()}
             >
               Reddet
@@ -420,37 +579,144 @@ export function PaymentTable({
   );
 }
 
+/* ------------------------------------------------------------------ */
+/* Aidat ve kira tabloları aynı hücre bileşenlerini paylaşır (DRY).     */
+/* ------------------------------------------------------------------ */
+
+function Th({ children }: { children: React.ReactNode }) {
+  return (
+    <th className="text-left px-5 py-3 text-sm font-semibold text-slate-600">{children}</th>
+  );
+}
+
+function EmptyRow({ colSpan, children }: { colSpan: number; children: React.ReactNode }) {
+  return (
+    <tr>
+      <td colSpan={colSpan} className="px-5 py-10 text-center text-slate-400 text-base">
+        {children}
+      </td>
+    </tr>
+  );
+}
+
+function ReceiptCell({
+  url,
+  onOpen,
+}: {
+  url: string | null;
+  onOpen: (url: string) => void;
+}) {
+  if (!url) return <span className="text-slate-400 text-sm">—</span>;
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      className="min-h-[40px] text-sm gap-1.5"
+      onClick={() => onOpen(url)}
+    >
+      <ExternalLink className="w-4 h-4" /> Görüntüle
+    </Button>
+  );
+}
+
+function ReviewCell({
+  paymentId,
+  disabled,
+  onApprove,
+  onReject,
+}: {
+  paymentId: string | null;
+  disabled: boolean;
+  onApprove: (id: string) => void;
+  onReject: (id: string) => void;
+}) {
+  if (!paymentId) return <span className="text-slate-400 text-sm">—</span>;
+  return (
+    <div className="flex gap-2">
+      <Button
+        size="sm"
+        className="min-h-[40px] bg-green-600 hover:bg-green-700 text-white gap-1.5"
+        disabled={disabled}
+        onClick={() => onApprove(paymentId)}
+      >
+        <Check className="w-4 h-4" /> Onayla
+      </Button>
+      <Button
+        size="sm"
+        variant="outline"
+        className="min-h-[40px] text-red-600 border-red-200 hover:bg-red-50 gap-1.5"
+        disabled={disabled}
+        onClick={() => onReject(paymentId)}
+      >
+        <XIcon className="w-4 h-4" /> Reddet
+      </Button>
+    </div>
+  );
+}
+
+const badge = "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-semibold";
+
 function StatusBadge({ payment, unit }: { payment?: Payment; unit: Unit }) {
   if (!unit.resident) {
     return (
-      <span className="inline-flex items-center px-3 py-1.5 rounded-full text-sm font-semibold text-slate-400 bg-slate-100">
-        — Boş Daire
-      </span>
+      <span className={cn(badge, "text-slate-400 bg-slate-100")}>— Boş Daire</span>
     );
   }
   if (!payment) {
     return (
-      <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-semibold text-red-700 bg-red-50">
+      <span className={cn(badge, "text-red-700 bg-red-50")}>
         <XCircle className="w-4 h-4" /> Yüklenmedi
       </span>
     );
   }
   if (payment.status === "APPROVED") {
     return (
-      <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-semibold text-green-700 bg-green-50">
+      <span className={cn(badge, "text-green-700 bg-green-50")}>
         <CheckCircle className="w-4 h-4" /> Onaylandı
       </span>
     );
   }
   if (payment.status === "PENDING") {
     return (
-      <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-semibold text-amber-700 bg-amber-50">
+      <span className={cn(badge, "text-amber-700 bg-amber-50")}>
         <Clock className="w-4 h-4" /> Beklemede
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-semibold text-red-700 bg-red-50">
+    <span className={cn(badge, "text-red-700 bg-red-50")}>
+      <XCircle className="w-4 h-4" /> Reddedildi
+    </span>
+  );
+}
+
+function RentStatusBadge({ charge }: { charge: RentCharge }) {
+  if (!charge.payment) {
+    const overdue = new Date(charge.dueDate) < new Date();
+    return (
+      <span
+        className={cn(badge, overdue ? "text-red-700 bg-red-50" : "text-slate-500 bg-slate-100")}
+      >
+        <XCircle className="w-4 h-4" /> {overdue ? "Vadesi Geçti" : "Yüklenmedi"}
+      </span>
+    );
+  }
+  if (charge.payment.status === "APPROVED") {
+    return (
+      <span className={cn(badge, "text-green-700 bg-green-50")}>
+        <CheckCircle className="w-4 h-4" /> Onaylandı
+      </span>
+    );
+  }
+  if (charge.payment.status === "PENDING") {
+    return (
+      <span className={cn(badge, "text-amber-700 bg-amber-50")}>
+        <Clock className="w-4 h-4" /> Beklemede
+      </span>
+    );
+  }
+  return (
+    <span className={cn(badge, "text-red-700 bg-red-50")}>
       <XCircle className="w-4 h-4" /> Reddedildi
     </span>
   );

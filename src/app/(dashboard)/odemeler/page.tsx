@@ -4,16 +4,24 @@ import { redirect } from "next/navigation";
 import { PaymentTable } from "./_components/payment-table";
 
 interface PageProps {
-  searchParams: Promise<{ apt?: string; month?: string; year?: string }>;
+  searchParams: Promise<{
+    apt?: string;
+    month?: string;
+    year?: string;
+    tur?: string;
+  }>;
 }
+
+const isPaymentTypeFilter = (v?: string): v is "ALL" | "AIDAT" | "KIRA" =>
+  v === "ALL" || v === "AIDAT" || v === "KIRA";
 
 export default async function OdemelerPage({ searchParams }: PageProps) {
   const session = await auth();
   if (!session?.user || session.user.role !== "ADMIN") redirect("/dashboard");
 
-  const { apt, month, year } = await searchParams;
+  const { apt, month, year, tur } = await searchParams;
+  const typeFilter = isPaymentTypeFilter(tur) ? tur : "ALL";
 
-  // Get all admin apartments
   const allApartments = await prisma.apartment.findMany({
     where: { managerId: session.user.id },
     select: { id: true, name: true },
@@ -34,16 +42,34 @@ export default async function OdemelerPage({ searchParams }: PageProps) {
     );
   }
 
-  // Find selected apartment
   const apartment = allApartments.find((a) => a.id === apt) ?? allApartments[0];
 
-  // Get all dues for this apartment (for month tabs)
+  // Aidat dönemleri (mevcut davranış korunuyor)
   const dues = await prisma.due.findMany({
     where: { apartmentId: apartment.id },
     orderBy: [{ year: "desc" }, { month: "desc" }],
   });
 
-  // Determine selected due — URL param > mevcut ay > en son due
+  // Kira dönemleri — aidattan bağımsız olarak kendi aylarına sahiptir.
+  const rentPeriods = await prisma.rentCharge.groupBy({
+    by: ["year", "month"],
+    where: { unit: { apartmentId: apartment.id } },
+    orderBy: [{ year: "desc" }, { month: "desc" }],
+  });
+
+  // Ay seçici iki türün ortak dönem kümesi üzerinden çalışır: tek seçim,
+  // iki bölüm. Böylece "Tümü" filtresinde aynı ayın aidat ve kirası yan yana gelir.
+  const periodKey = (y: number, m: number) => y * 100 + m;
+  const periodMap = new Map<number, { month: number; year: number }>();
+  for (const d of dues) periodMap.set(periodKey(d.year, d.month), { month: d.month, year: d.year });
+  for (const r of rentPeriods)
+    periodMap.set(periodKey(r.year, r.month), { month: r.month, year: r.year });
+
+  const periods = Array.from(periodMap.values()).sort(
+    (a, b) => periodKey(b.year, b.month) - periodKey(a.year, a.month)
+  );
+
+  // Seçili dönem — URL param > mevcut ay > en son dönem (mevcut mantık korunuyor)
   const now = new Date();
   const thisMonth = now.getMonth() + 1;
   const thisYear = now.getFullYear();
@@ -52,15 +78,11 @@ export default async function OdemelerPage({ searchParams }: PageProps) {
   let selectedYear: number;
 
   if (month && year) {
-    // Explicit URL param
     selectedMonth = parseInt(month);
     selectedYear = parseInt(year);
   } else {
-    // Önce mevcut ayı ara, yoksa en son due'ya düş
-    const currentMonthDue = dues.find(
-      (d) => d.month === thisMonth && d.year === thisYear
-    );
-    const fallback = currentMonthDue ?? dues[0];
+    const currentPeriod = periods.find((p) => p.month === thisMonth && p.year === thisYear);
+    const fallback = currentPeriod ?? periods[0];
     selectedMonth = fallback?.month ?? thisMonth;
     selectedYear = fallback?.year ?? thisYear;
   }
@@ -68,7 +90,6 @@ export default async function OdemelerPage({ searchParams }: PageProps) {
   const selectedDue =
     dues.find((d) => d.month === selectedMonth && d.year === selectedYear) ?? null;
 
-  // Get payments for selected due
   const rawPayments = selectedDue
     ? await prisma.payment.findMany({
         where: { dueId: selectedDue.id },
@@ -80,19 +101,36 @@ export default async function OdemelerPage({ searchParams }: PageProps) {
       })
     : [];
 
-  // Get all units for this apartment (with resident)
   const rawUnits = await prisma.unit.findMany({
     where: { apartmentId: apartment.id },
-    include: {
-      resident: { select: { id: true, name: true, email: true } },
-    },
+    include: { resident: { select: { id: true, name: true, email: true } } },
     orderBy: { unitNumber: "asc" },
   });
 
-  // Serialize dates
+  // Seçili aya ait kira borçları + dekontları
+  const rawRentCharges = await prisma.rentCharge.findMany({
+    where: {
+      unit: { apartmentId: apartment.id },
+      month: selectedMonth,
+      year: selectedYear,
+    },
+    include: {
+      unit: { select: { id: true, unitNumber: true } },
+      lease: {
+        select: {
+          id: true,
+          status: true,
+          tenant: { select: { id: true, name: true, email: true } },
+        },
+      },
+      payments: true,
+    },
+    orderBy: { unit: { unitNumber: "asc" } },
+  });
+
   const payments = rawPayments.map((p) => ({
     id: p.id,
-    dueId: p.dueId,
+    dueId: p.dueId!,
     unitId: p.unitId,
     residentId: p.residentId,
     status: p.status as string,
@@ -109,15 +147,6 @@ export default async function OdemelerPage({ searchParams }: PageProps) {
     resident: u.resident,
   }));
 
-  const serializedDues = dues.map((d) => ({
-    id: d.id,
-    month: d.month,
-    year: d.year,
-    amount: d.amount,
-    dueDate: d.dueDate.toISOString(),
-    description: d.description,
-  }));
-
   const serializedSelectedDue = selectedDue
     ? {
         id: selectedDue.id,
@@ -129,14 +158,40 @@ export default async function OdemelerPage({ searchParams }: PageProps) {
       }
     : null;
 
+  const rentCharges = rawRentCharges.map((c) => {
+    const payment = c.payments[0];
+    return {
+      id: c.id,
+      leaseId: c.lease.id,
+      leaseStatus: c.lease.status as string,
+      unitNumber: c.unit.unitNumber,
+      tenant: c.lease.tenant,
+      amount: c.amount,
+      month: c.month,
+      year: c.year,
+      dueDate: c.dueDate.toISOString(),
+      payment: payment
+        ? {
+            id: payment.id,
+            status: payment.status as string,
+            receiptUrl: payment.receiptUrl,
+            rejectionReason: payment.rejectionReason,
+          }
+        : null,
+    };
+  });
+
   return (
     <PaymentTable
-      key={`${apartment.id}-${serializedSelectedDue?.id ?? "no-due"}`}
+      key={`${apartment.id}-${selectedYear}-${selectedMonth}`}
       apartment={apartment}
-      dues={serializedDues}
+      periods={periods}
+      selectedPeriod={{ month: selectedMonth, year: selectedYear }}
       selectedDue={serializedSelectedDue}
       payments={payments}
       units={units}
+      rentCharges={rentCharges}
+      typeFilter={typeFilter}
     />
   );
 }

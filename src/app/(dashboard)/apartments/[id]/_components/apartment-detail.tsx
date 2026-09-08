@@ -2,11 +2,12 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import {
   ArrowLeft, Plus, Trash2, UserMinus, Mail, Copy,
   UserCheck, Clock, Building2, ChevronRight, Pencil, User, X,
+  KeyRound, FileText, CalendarDays,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,6 +17,9 @@ import { Separator } from "@/components/ui/separator";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
+import { SegmentedTabs } from "@/components/ui/segmented-tabs";
+import { LeaseExpiryWarning, LeaseStatusBadge } from "@/components/lease-status-badges";
+import { formatTRY } from "@/lib/constants";
 
 type Unit = {
   id: string;
@@ -23,6 +27,24 @@ type Unit = {
   floor: number | null;
   resident: { id: string; name: string; email: string; phone: string | null } | null;
   invites: { token: string; email: string }[];
+  /** Dairenin yürürlükteki kira sözleşmesi (yoksa null). */
+  activeLease: { id: string; monthlyRent: number; endDate: string; status: string } | null;
+};
+
+type Lease = {
+  id: string;
+  unitId: string;
+  unitNumber: string;
+  tenantName: string | null;
+  monthlyRent: number;
+  startDate: string;
+  endDate: string;
+  depositAmount: number;
+  depositStatus: string;
+  status: string;
+  chargeCount: number;
+  approvedCount: number;
+  pendingCount: number;
 };
 
 type Apartment = {
@@ -31,6 +53,8 @@ type Apartment = {
   address: string;
   units: Unit[];
 };
+
+type TabValue = "aidat" | "kira";
 
 type InviteResult = { email: string; success: boolean; error?: string; inviteUrl?: string };
 
@@ -111,13 +135,35 @@ function addEmailTag(
 // -----------------------------------------------------------
 // Ana bileşen
 // -----------------------------------------------------------
-export function ApartmentDetail({ apartment: initial }: { apartment: Apartment }) {
+export function ApartmentDetail({
+  apartment: initial,
+  leases,
+}: {
+  apartment: Apartment;
+  leases: Lease[];
+}) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [apartment, setApartment] = useState(initial);
+
+  // Aktif sekme URL'den okunur; böylece sözleşme sayfalarından geri dönüşte
+  // (?tab=kira) kullanıcı bıraktığı yere döner ve sekme paylaşılabilir olur.
+  const [tab, setTab] = useState<TabValue>(
+    searchParams.get("tab") === "kira" ? "kira" : "aidat"
+  );
+
+  function selectTab(next: TabValue) {
+    setTab(next);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("tab", next);
+    // replace: sekme değişimi tarayıcı geçmişini kirletmesin.
+    router.replace(`/apartments/${initial.id}?${params.toString()}`, { scroll: false });
+  }
 
   // Add unit
   const [showAddUnit, setShowAddUnit] = useState(false);
   const [newUnit, setNewUnit] = useState({ unitNumber: "", floor: "" });
+  const [withLease, setWithLease] = useState(false);
   const [addingUnit, setAddingUnit] = useState(false);
 
   // Davet Et dialog (boş daireler)
@@ -159,13 +205,24 @@ export function ApartmentDetail({ apartment: initial }: { apartment: Apartment }
       if (!res.ok) { toast.error(data.error); return; }
       setApartment((prev) => ({
         ...prev,
-        units: [...prev.units, { ...data, resident: null, invites: [] }].sort((a, b) =>
+        units: [
+          ...prev.units,
+          { ...data, resident: null, invites: [], activeLease: null },
+        ].sort((a, b) =>
           a.unitNumber.localeCompare(b.unitNumber, "tr", { numeric: true })
         ),
       }));
       setNewUnit({ unitNumber: "", floor: "" });
       setShowAddUnit(false);
       toast.success(`Daire ${data.unitNumber} eklendi.`);
+
+      // "Kira sözleşmesi var" işaretlendiyse doğrudan sözleşme formuna geç.
+      if (withLease) {
+        setWithLease(false);
+        router.push(`/apartments/${apartment.id}/leases/new?unit=${data.id}`);
+        return;
+      }
+      router.refresh();
     } finally {
       setAddingUnit(false);
     }
@@ -346,6 +403,8 @@ export function ApartmentDetail({ apartment: initial }: { apartment: Apartment }
   }
 
   const occupiedCount = apartment.units.filter((u) => u.resident).length;
+  const activeLeases = leases.filter((l) => l.status === "ACTIVE");
+  const monthlyRentTotal = activeLeases.reduce((sum, l) => sum + l.monthlyRent, 0);
 
   // ----------------------------------------------------------
   // Render
@@ -388,6 +447,15 @@ export function ApartmentDetail({ apartment: initial }: { apartment: Apartment }
             </div>
           </CardContent>
         </Card>
+        <Card className="flex-1 min-w-[140px]">
+          <CardContent className="py-3 px-4 flex items-center gap-3">
+            <KeyRound className="w-5 h-5 text-blue-500" />
+            <div>
+              <p className="text-xl font-bold leading-none">{activeLeases.length}</p>
+              <p className="text-xs text-slate-500">Aktif Kira Sözleşmesi</p>
+            </div>
+          </CardContent>
+        </Card>
         <Button variant="outline" asChild className="self-center">
           <Link href={`/apartments/${apartment.id}/payments`}>
             Dekontlar <ChevronRight className="w-4 h-4 ml-1" />
@@ -395,8 +463,19 @@ export function ApartmentDetail({ apartment: initial }: { apartment: Apartment }
         </Button>
       </div>
 
+      {/* Aidat / Kira sekmeleri */}
+      <SegmentedTabs
+        ariaLabel="Apartman bölümleri"
+        value={tab}
+        onChange={selectTab}
+        items={[
+          { value: "aidat", label: "Daireler & Aidat", count: apartment.units.length },
+          { value: "kira", label: "Kira Sözleşmeleri", count: activeLeases.length },
+        ]}
+      />
+
       {/* Units */}
-      <div>
+      <div hidden={tab !== "aidat"}>
         <div className="flex items-center justify-between mb-3">
           <h2 className="font-semibold text-slate-700">Daireler</h2>
           <Button size="sm" onClick={() => setShowAddUnit(!showAddUnit)}>
@@ -433,6 +512,20 @@ export function ApartmentDetail({ apartment: initial }: { apartment: Apartment }
                 </Button>
                 <Button variant="ghost" onClick={() => setShowAddUnit(false)}>İptal</Button>
               </div>
+              <label className="flex items-start gap-2 mt-3 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 rounded border-slate-300 accent-slate-800"
+                  checked={withLease}
+                  onChange={(e) => setWithLease(e.target.checked)}
+                />
+                <span className="text-sm text-slate-600">
+                  Bu dairede kira sözleşmesi var
+                  <span className="block text-xs text-slate-400">
+                    İşaretlerseniz daire eklendikten sonra sözleşme formuna yönlendirilirsiniz.
+                  </span>
+                </span>
+              </label>
             </CardContent>
           </Card>
         )}
@@ -466,6 +559,12 @@ export function ApartmentDetail({ apartment: initial }: { apartment: Apartment }
                             <div className="flex items-center gap-1.5">
                               <UserCheck className="w-3.5 h-3.5 text-green-500 shrink-0" />
                               <span className="text-sm font-medium truncate">{unit.resident.name}</span>
+                              {unit.activeLease && (
+                                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-700 bg-blue-50 border border-blue-200 rounded-full px-2 py-0.5 shrink-0">
+                                  <KeyRound className="w-3 h-3" />
+                                  Kiracı · {formatTRY(unit.activeLease.monthlyRent)}
+                                </span>
+                              )}
                             </div>
                             <p className="text-xs text-slate-400 truncate">{unit.resident.email}</p>
                           </div>
@@ -485,6 +584,18 @@ export function ApartmentDetail({ apartment: initial }: { apartment: Apartment }
                       <div className="flex items-center gap-1 shrink-0">
                         {unit.resident ? (
                           <>
+                            <Button size="sm" variant="outline" className="h-7 text-xs" asChild>
+                              <Link
+                                href={
+                                  unit.activeLease
+                                    ? `/apartments/${apartment.id}/leases/${unit.activeLease.id}`
+                                    : `/apartments/${apartment.id}/leases/new?unit=${unit.id}`
+                                }
+                              >
+                                <KeyRound className="w-3 h-3 mr-1" />
+                                {unit.activeLease ? "Sözleşme" : "Kira Ekle"}
+                              </Link>
+                            </Button>
                             <Button
                               size="sm"
                               variant="outline"
@@ -539,6 +650,90 @@ export function ApartmentDetail({ apartment: initial }: { apartment: Apartment }
                 </Card>
               );
             })}
+          </div>
+        )}
+      </div>
+
+      {/* Kira Sözleşmeleri sekmesi */}
+      <div hidden={tab !== "kira"} className="space-y-3">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div>
+            <h2 className="font-semibold text-slate-700">Kira Sözleşmeleri</h2>
+            {activeLeases.length > 0 && (
+              <p className="text-xs text-slate-400">
+                Aylık toplam kira geliri: {formatTRY(monthlyRentTotal)}
+              </p>
+            )}
+          </div>
+          <Button size="sm" asChild>
+            <Link href={`/apartments/${apartment.id}/leases/new`}>
+              <Plus className="w-4 h-4 mr-1" /> Yeni Sözleşme
+            </Link>
+          </Button>
+        </div>
+
+        {leases.length === 0 ? (
+          <Card>
+            <CardContent className="py-10 text-center">
+              <FileText className="w-12 h-12 text-slate-200 mx-auto mb-3" />
+              <p className="text-slate-500 font-medium">Henüz kira sözleşmesi yok.</p>
+              <p className="text-slate-400 text-sm mt-1 mb-5">
+                Kiraya verilen daireler için sözleşme tanımlayın; aylık kira borçları
+                otomatik oluşur.
+              </p>
+              <Button asChild>
+                <Link href={`/apartments/${apartment.id}/leases/new`}>
+                  <Plus className="w-4 h-4 mr-1" /> İlk Sözleşmeyi Oluştur
+                </Link>
+              </Button>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="space-y-2">
+            {leases.map((lease) => (
+              <Card key={lease.id}>
+                <CardContent className="py-3 px-4">
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold text-slate-800 text-sm">
+                          Daire {lease.unitNumber}
+                        </span>
+                        <LeaseStatusBadge status={lease.status} />
+                        <LeaseExpiryWarning endDate={lease.endDate} status={lease.status} />
+                      </div>
+                      <p className="text-xs text-slate-400 mt-0.5 truncate">
+                        {lease.tenantName ?? "Kiracı atanmadı"} ·{" "}
+                        {new Date(lease.startDate).toLocaleDateString("tr-TR")} –{" "}
+                        {new Date(lease.endDate).toLocaleDateString("tr-TR")}
+                      </p>
+                      <div className="flex items-center gap-3 mt-1 text-xs text-slate-500 flex-wrap">
+                        <span className="inline-flex items-center gap-1">
+                          <CalendarDays className="w-3 h-3" />
+                          {lease.approvedCount}/{lease.chargeCount} ay tahsil edildi
+                        </span>
+                        {lease.pendingCount > 0 && (
+                          <span className="text-amber-600 font-medium">
+                            ⏳ {lease.pendingCount} dekont bekliyor
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="text-right shrink-0">
+                      <p className="font-bold text-slate-800">{formatTRY(lease.monthlyRent)}</p>
+                      <p className="text-xs text-slate-400">aylık</p>
+                    </div>
+
+                    <Button size="sm" variant="outline" className="h-8 text-xs shrink-0" asChild>
+                      <Link href={`/apartments/${apartment.id}/leases/${lease.id}`}>
+                        Detay <ChevronRight className="w-3 h-3 ml-1" />
+                      </Link>
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
           </div>
         )}
       </div>

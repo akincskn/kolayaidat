@@ -19,6 +19,26 @@ enum PaymentStatus {
   REJECTED
 }
 
+/// Bir ödemenin/borcun türü. Mevcut kayitlar migration ile AIDAT olarak isaretlenir.
+enum PaymentType {
+  AIDAT
+  KIRA
+}
+
+/// Kira sozlesmesinin yasam dongusu.
+enum LeaseStatus {
+  ACTIVE
+  ENDED
+  CANCELLED
+}
+
+/// Depozito durumu. PENDING = henuz alinmadi.
+enum DepositStatus {
+  PENDING
+  PAID
+  REFUNDED
+}
+
 model User {
   id            String    @id @default(cuid())
   email         String    @unique
@@ -41,6 +61,7 @@ model User {
   payments          Payment[]
   invites           Invite[]    @relation("InvitedBy")
   receivedInvites   Invite[]    @relation("InvitedUser")
+  leases            Lease[]     @relation("LeaseTenant")
 }
 
 model Account {
@@ -109,6 +130,8 @@ model Unit {
   resident  User?     @relation("UnitResident", fields: [residentId], references: [id])
   payments  Payment[]
   invites   Invite[]
+  leases    Lease[]
+  rentCharges RentCharge[]
 
   @@unique([apartmentId, unitNumber])
 }
@@ -130,9 +153,20 @@ model Due {
   @@unique([apartmentId, month, year])
 }
 
+/// Aidat ve kira dekontlarinin ORTAK modeli.
+///
+/// `type` ayirt edici alandir; borc kaydina gore tam olarak bir FK doludur:
+///   AIDAT -> dueId dolu,        rentChargeId NULL
+///   KIRA  -> rentChargeId dolu, dueId NULL
+///
+/// Postgres NULL'lari birbirine esit saymadigi icin mevcut
+/// @@unique([dueId, unitId]) indeksi kira satirlarindan etkilenmez ve
+/// aidat mukerrer kaydi korumasi aynen calismaya devam eder.
 model Payment {
   id              String        @id @default(cuid())
-  dueId           String
+  type            PaymentType   @default(AIDAT)
+  dueId           String?
+  rentChargeId    String?
   unitId          String
   residentId      String
   receiptUrl      String?
@@ -143,14 +177,78 @@ model Payment {
   reviewedAt      DateTime?
   updatedAt       DateTime      @updatedAt
 
-  due      Due  @relation(fields: [dueId], references: [id], onDelete: Cascade)
-  unit     Unit @relation(fields: [unitId], references: [id], onDelete: Cascade)
-  resident User @relation(fields: [residentId], references: [id])
+  due        Due?        @relation(fields: [dueId], references: [id], onDelete: Cascade)
+  rentCharge RentCharge? @relation(fields: [rentChargeId], references: [id], onDelete: Cascade)
+  unit       Unit        @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  resident   User        @relation(fields: [residentId], references: [id])
 
   @@unique([dueId, unitId])
+  @@unique([rentChargeId, unitId])
   @@index([residentId])
   @@index([unitId])
   @@index([status])
+  @@index([type])
+}
+
+/// Bir daireye ait kira sozlesmesi.
+///
+/// Bir dairede ayni anda yalnizca bir ACTIVE sozlesme bulunabilir; bu kural
+/// uygulama katmaninda transaction icinde zorlanir (bkz. lib/lease.ts).
+/// Postgres partial unique index Prisma 5 semasinda ifade edilemedigi icin
+/// veritabani seviyesinde degil, servis seviyesinde tutulur.
+model Lease {
+  id               String        @id @default(cuid())
+  unitId           String
+  /// Kiraci. Daireden sakin cikarilirsa NULL'a duser, sozlesme kaydi korunur.
+  tenantId         String?
+  monthlyRent      Float
+  startDate        DateTime
+  endDate          DateTime
+  /// Ayin kacinda odenecegi (1-28). 28 ustu kabul edilmez; her ayda gecerli olsun.
+  paymentDay       Int           @default(1)
+  depositAmount    Float         @default(0)
+  depositStatus    DepositStatus @default(PENDING)
+  depositPaidAt    DateTime?
+  depositRefundedAt DateTime?
+  /// Yillik kira artis orani (%). Her 12 ayda bir borc tutarina uygulanir.
+  rentIncreaseRate Float?
+  notes            String?
+  status           LeaseStatus   @default(ACTIVE)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  unit    Unit         @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  tenant  User?        @relation("LeaseTenant", fields: [tenantId], references: [id], onDelete: SetNull)
+  charges RentCharge[]
+
+  @@index([unitId])
+  @@index([tenantId])
+  @@index([status])
+  @@index([endDate])
+}
+
+/// Sozlesmeden turetilen aylik kira borcu. Aidattaki `Due`'nun kira karsiligi,
+/// farki: apartman degil DAIRE seviyesindedir.
+model RentCharge {
+  id          String   @id @default(cuid())
+  leaseId     String
+  /// Sorgu kolayligi icin denormalize edildi; lease.unitId ile ayni.
+  unitId      String
+  amount      Float
+  month       Int
+  year        Int
+  dueDate     DateTime
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  lease    Lease     @relation(fields: [leaseId], references: [id], onDelete: Cascade)
+  unit     Unit      @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  payments Payment[]
+
+  @@unique([leaseId, month, year])
+  @@index([unitId])
+  @@index([year, month])
 }
 
 model PasswordResetToken {

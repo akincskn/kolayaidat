@@ -1,8 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { CheckCircle, Clock, XCircle, Upload, FileText, ExternalLink } from "lucide-react";
+import {
+  CheckCircle,
+  Clock,
+  XCircle,
+  Upload,
+  FileText,
+  ExternalLink,
+  KeyRound,
+  Receipt,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -14,41 +23,38 @@ import {
 } from "@/components/ui/dialog";
 import { UploadButton } from "@uploadthing/react";
 import type { OurFileRouter } from "@/lib/uploadthing";
+import { SegmentedTabs } from "@/components/ui/segmented-tabs";
+import { formatTRY, MONTHS_TR } from "@/lib/constants";
+import { LeaseExpiryWarning } from "@/components/lease-status-badges";
 
-const MONTHS_TR = [
-  "",
-  "Ocak",
-  "Şubat",
-  "Mart",
-  "Nisan",
-  "Mayıs",
-  "Haziran",
-  "Temmuz",
-  "Ağustos",
-  "Eylül",
-  "Ekim",
-  "Kasım",
-  "Aralık",
-];
-
-type Due = {
+/** Aidat ve kira borcunun ortak istemci temsili. */
+export type ChargeItem = {
   id: string;
+  type: "AIDAT" | "KIRA";
   month: number;
   year: number;
   amount: number;
-  dueDate: string | Date;
+  dueDate: string;
   description: string | null;
+  payment: {
+    id: string;
+    status: string;
+    receiptUrl: string | null;
+    rejectionReason: string | null;
+  } | null;
 };
-type Payment = {
-  id: string;
-  dueId: string;
+
+type LeaseInfo = {
+  monthlyRent: number;
+  startDate: string;
+  endDate: string;
+  paymentDay: number;
+  depositAmount: number;
+  depositStatus: string;
   status: string;
-  receiptUrl: string | null;
-  rejectionReason: string | null;
-  uploadedAt: string | Date;
-  due: Due;
-};
-type Unit = { id: string; unitNumber: string; dueDate: string };
+} | null;
+
+type TypeFilter = "ALL" | "AIDAT" | "KIRA";
 
 function PaymentStatusBadge({ status }: { status: string }) {
   if (status === "APPROVED")
@@ -71,96 +77,181 @@ function PaymentStatusBadge({ status }: { status: string }) {
 }
 
 export function MyPaymentsClient({
-  unit,
-  dues,
-  initialPayments,
+  apartmentName,
+  unitNumber,
+  items: initialItems,
+  lease,
 }: {
-  unit: Unit;
-  dues: Due[];
-  initialPayments: Payment[];
+  apartmentName: string;
+  unitNumber: string;
+  items: ChargeItem[];
+  lease: LeaseInfo;
 }) {
-  const [payments, setPayments] = useState(initialPayments);
-  const [uploadDue, setUploadDue] = useState<Due | null>(null);
+  const [items, setItems] = useState(initialItems);
+  const [filter, setFilter] = useState<TypeFilter>("ALL");
+  const [uploadItem, setUploadItem] = useState<ChargeItem | null>(null);
   const [uploading, setUploading] = useState(false);
 
-  const paymentMap = new Map(payments.map((p) => [p.dueId, p]));
+  const counts = useMemo(
+    () => ({
+      aidat: items.filter((i) => i.type === "AIDAT").length,
+      kira: items.filter((i) => i.type === "KIRA").length,
+    }),
+    [items]
+  );
 
-  async function submitPayment(dueId: string, receiptUrl: string, receiptKey: string) {
+  const visible = useMemo(
+    () => (filter === "ALL" ? items : items.filter((i) => i.type === filter)),
+    [items, filter]
+  );
+
+  async function submitPayment(item: ChargeItem, receiptUrl: string, receiptKey: string) {
     const res = await fetch("/api/payments", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ dueId, receiptUrl, receiptKey }),
+      body: JSON.stringify({
+        type: item.type,
+        ...(item.type === "AIDAT" ? { dueId: item.id } : { rentChargeId: item.id }),
+        receiptUrl,
+        receiptKey,
+      }),
     });
     const data = await res.json();
     if (!res.ok) {
       toast.error(data.error || "Yükleme başarısız.");
       return;
     }
-    setPayments((prev) => {
-      const exists = prev.find((p) => p.dueId === dueId);
-      if (exists) return prev.map((p) => (p.dueId === dueId ? { ...data } : p));
-      return [data, ...prev];
-    });
+    setItems((prev) =>
+      prev.map((i) =>
+        i.id === item.id && i.type === item.type
+          ? {
+              ...i,
+              payment: {
+                id: data.id,
+                status: data.status,
+                receiptUrl: data.receiptUrl,
+                rejectionReason: data.rejectionReason,
+              },
+            }
+          : i
+      )
+    );
     toast.success("Dekontunuz yüklendi, incelemeye alındı.");
-    setUploadDue(null);
+    setUploadItem(null);
   }
 
-  const canUpload = (payment?: Payment) => {
-    if (!payment) return true;
-    if (payment.status === "REJECTED") return true;
-    return false;
-  };
+  /** Yeni dekont yalnızca hiç ödeme yokken veya reddedilmişken yüklenebilir. */
+  const canUpload = (item: ChargeItem) =>
+    !item.payment || item.payment.status === "REJECTED";
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-slate-800">Ödemelerim</h1>
         <p className="text-slate-400 text-base">
-          Daire {unit.unitNumber} — {unit.dueDate}
+          Daire {unitNumber} — {apartmentName}
         </p>
       </div>
 
-      {dues.length === 0 ? (
+      {/* Kira sözleşmesi özeti */}
+      {lease && (
+        <Card className="border-blue-200">
+          <CardContent className="py-4 px-5">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <KeyRound className="w-5 h-5 text-blue-500 shrink-0" />
+                <div>
+                  <p className="text-sm text-slate-500">Kira Sözleşmeniz</p>
+                  <p className="text-lg font-bold text-slate-800">
+                    {formatTRY(lease.monthlyRent)} / ay · her ayın {lease.paymentDay}. günü
+                  </p>
+                  <p className="text-xs text-slate-400">
+                    {new Date(lease.startDate).toLocaleDateString("tr-TR")} –{" "}
+                    {new Date(lease.endDate).toLocaleDateString("tr-TR")}
+                    {lease.depositAmount > 0 &&
+                      ` · Depozito ${formatTRY(lease.depositAmount)} (${
+                        lease.depositStatus === "PAID"
+                          ? "Ödendi"
+                          : lease.depositStatus === "REFUNDED"
+                            ? "İade Edildi"
+                            : "Alınmadı"
+                      })`}
+                  </p>
+                </div>
+              </div>
+              <LeaseExpiryWarning endDate={lease.endDate} status={lease.status} />
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Tür filtresi — kira borcu yoksa gösterilmez */}
+      {counts.kira > 0 && (
+        <SegmentedTabs
+          ariaLabel="Ödeme türü filtresi"
+          value={filter}
+          onChange={setFilter}
+          items={[
+            { value: "ALL", label: "Tümü", count: items.length },
+            { value: "AIDAT", label: "Aidat", count: counts.aidat },
+            { value: "KIRA", label: "Kira", count: counts.kira },
+          ]}
+        />
+      )}
+
+      {visible.length === 0 ? (
         <Card>
           <CardContent className="py-16 text-center text-slate-400 text-base">
-            Henüz aidat tanımlanmadı. Yöneticinizin aidat oluşturmasını bekleyin.
+            {items.length === 0
+              ? "Henüz borç tanımlanmadı. Yöneticinizin tanımlamasını bekleyin."
+              : "Bu filtrede gösterilecek kayıt yok."}
           </CardContent>
         </Card>
       ) : (
         <div className="space-y-4">
-          {dues.map((due) => {
-            const payment = paymentMap.get(due.id);
-            const now = new Date();
-            const dueMonthStart = new Date(due.year, due.month - 1, 1);
-            const isPast =
-              dueMonthStart <= now && new Date(due.dueDate as string) < now;
-            const uploadable = canUpload(payment);
+          {visible.map((item) => {
+            const isOverdue = !item.payment && new Date(item.dueDate) < new Date();
+            const uploadable = canUpload(item);
 
             return (
               <Card
-                key={due.id}
+                key={`${item.type}-${item.id}`}
                 className={
-                  payment?.status === "REJECTED"
+                  item.payment?.status === "REJECTED"
                     ? "border-red-200"
-                    : payment?.status === "APPROVED"
+                    : item.payment?.status === "APPROVED"
                       ? "border-green-200"
                       : ""
                 }
               >
                 <CardContent className="py-5 px-6">
                   <div className="flex flex-wrap items-start gap-4 justify-between">
-                    {/* Left: info */}
+                    {/* Sol: bilgi */}
                     <div className="space-y-1.5">
                       <div className="flex items-center gap-2 flex-wrap">
+                        <span
+                          className={`inline-flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-full ${
+                            item.type === "KIRA"
+                              ? "text-blue-700 bg-blue-50 border border-blue-200"
+                              : "text-slate-600 bg-slate-100 border border-slate-200"
+                          }`}
+                        >
+                          {item.type === "KIRA" ? (
+                            <KeyRound className="w-3 h-3" />
+                          ) : (
+                            <Receipt className="w-3 h-3" />
+                          )}
+                          {item.type === "KIRA" ? "Kira" : "Aidat"}
+                        </span>
                         <h3 className="text-xl font-bold text-slate-800">
-                          {MONTHS_TR[due.month]} {due.year}
+                          {MONTHS_TR[item.month]} {item.year}
                         </h3>
-                        {isPast && !payment && (
+                        {isOverdue && (
                           <span className="text-xs font-semibold text-red-600 bg-red-50 border border-red-200 px-2 py-0.5 rounded-full">
                             Vadesi Geçti
                           </span>
                         )}
-                        {!payment && !isPast && (
+                        {!item.payment && !isOverdue && (
                           <span className="text-xs font-medium text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
                             Ödenmedi
                           </span>
@@ -168,32 +259,36 @@ export function MyPaymentsClient({
                       </div>
 
                       <p className="text-2xl font-bold text-slate-700">
-                        {due.amount.toLocaleString("tr-TR")} ₺
+                        {formatTRY(item.amount)}
                       </p>
 
                       <p className="text-sm text-slate-400">
-                        Son ödeme:{" "}
-                        {new Date(due.dueDate as string).toLocaleDateString("tr-TR")}
+                        Son ödeme: {new Date(item.dueDate).toLocaleDateString("tr-TR")}
                       </p>
 
-                      {due.description && (
-                        <p className="text-sm text-slate-400 italic">{due.description}</p>
+                      {item.description && (
+                        <p className="text-sm text-slate-400 italic">{item.description}</p>
                       )}
 
-                      {payment?.status === "REJECTED" && payment.rejectionReason && (
-                        <div className="mt-2 bg-red-50 border border-red-200 rounded-lg px-4 py-3">
-                          <p className="text-sm font-semibold text-red-700 mb-0.5">Red Sebebi:</p>
-                          <p className="text-sm text-red-600">{payment.rejectionReason}</p>
-                        </div>
-                      )}
+                      {item.payment?.status === "REJECTED" &&
+                        item.payment.rejectionReason && (
+                          <div className="mt-2 bg-red-50 border border-red-200 rounded-lg px-4 py-3">
+                            <p className="text-sm font-semibold text-red-700 mb-0.5">
+                              Red Sebebi:
+                            </p>
+                            <p className="text-sm text-red-600">
+                              {item.payment.rejectionReason}
+                            </p>
+                          </div>
+                        )}
                     </div>
 
-                    {/* Right: status + actions */}
+                    {/* Sağ: durum + işlemler */}
                     <div className="flex flex-col items-end gap-3 shrink-0">
-                      {payment && <PaymentStatusBadge status={payment.status} />}
+                      {item.payment && <PaymentStatusBadge status={item.payment.status} />}
 
                       <div className="flex items-center gap-2 flex-wrap justify-end">
-                        {payment?.receiptUrl && (
+                        {item.payment?.receiptUrl && (
                           <Button
                             size="sm"
                             variant="outline"
@@ -201,7 +296,7 @@ export function MyPaymentsClient({
                             asChild
                           >
                             <a
-                              href={payment.receiptUrl}
+                              href={item.payment.receiptUrl}
                               target="_blank"
                               rel="noopener noreferrer"
                             >
@@ -213,11 +308,13 @@ export function MyPaymentsClient({
                         {uploadable && (
                           <Button
                             size="default"
-                            onClick={() => setUploadDue(due)}
+                            onClick={() => setUploadItem(item)}
                             className="min-h-[52px] px-6 text-base gap-2"
                           >
                             <Upload className="w-5 h-5" />
-                            {payment?.status === "REJECTED" ? "Tekrar Yükle" : "📎 Dekont Yükle"}
+                            {item.payment?.status === "REJECTED"
+                              ? "Tekrar Yükle"
+                              : "📎 Dekont Yükle"}
                           </Button>
                         )}
                       </div>
@@ -231,22 +328,24 @@ export function MyPaymentsClient({
       )}
 
       {/* Upload Dialog */}
-      <Dialog open={!!uploadDue} onOpenChange={(o) => !o && setUploadDue(null)}>
+      <Dialog open={!!uploadItem} onOpenChange={(o) => !o && setUploadItem(null)}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
               Dekont Yükle —{" "}
-              {uploadDue && `${MONTHS_TR[uploadDue.month]} ${uploadDue.year}`}
+              {uploadItem &&
+                `${uploadItem.type === "KIRA" ? "Kira" : "Aidat"} · ${
+                  MONTHS_TR[uploadItem.month]
+                } ${uploadItem.year}`}
             </DialogTitle>
           </DialogHeader>
-          {uploadDue && (
+          {uploadItem && (
             <div className="space-y-4">
               <div className="bg-slate-50 rounded-lg p-4 text-base">
                 <p className="text-slate-600">
-                  <strong className="text-slate-800">
-                    {uploadDue.amount.toLocaleString("tr-TR")} ₺
-                  </strong>{" "}
-                  tutarındaki aidat için dekont yükleyin.
+                  <strong className="text-slate-800">{formatTRY(uploadItem.amount)}</strong>{" "}
+                  tutarındaki {uploadItem.type === "KIRA" ? "kira" : "aidat"} için dekont
+                  yükleyin.
                 </p>
                 <p className="text-slate-400 text-sm mt-1">PDF veya fotoğraf (maks. 8MB)</p>
               </div>
@@ -260,7 +359,7 @@ export function MyPaymentsClient({
                   onClientUploadComplete={(res) => {
                     setUploading(false);
                     if (res?.[0]) {
-                      submitPayment(uploadDue.id, res[0].url, res[0].key);
+                      submitPayment(uploadItem, res[0].url, res[0].key);
                     }
                   }}
                   onUploadError={(err) => {
@@ -280,7 +379,7 @@ export function MyPaymentsClient({
             <Button
               variant="outline"
               size="lg"
-              onClick={() => setUploadDue(null)}
+              onClick={() => setUploadItem(null)}
               disabled={uploading}
             >
               İptal

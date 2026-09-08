@@ -21,8 +21,10 @@ export default async function PaymentsPage({ params }: { params: { id: string } 
   });
   if (!apartment) notFound();
 
-  const payments = await prisma.payment.findMany({
-    where: { unit: { apartmentId: params.id } },
+  // Bu ekran aidat dönemleri (Due) etrafında kurgulanmıştır; kira dekontları
+  // /odemeler sayfasındaki "Kira" filtresinde ve sözleşme detayında yönetilir.
+  const rawPayments = await prisma.payment.findMany({
+    where: { unit: { apartmentId: params.id }, type: "AIDAT" },
     include: {
       due: true,
       unit: { select: { id: true, unitNumber: true } },
@@ -30,6 +32,9 @@ export default async function PaymentsPage({ params }: { params: { id: string } 
     },
     orderBy: { uploadedAt: "desc" },
   });
+
+  // type: "AIDAT" filtresi nedeniyle `due` her zaman doludur.
+  const payments = rawPayments.map((p) => ({ ...p, due: p.due! }));
 
   return (
     <PaymentsManager

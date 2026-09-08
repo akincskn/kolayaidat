@@ -1,4 +1,5 @@
 import nodemailer from "nodemailer";
+import { MONTHS_TR } from "@/lib/constants";
 
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST ?? "smtp.gmail.com",
@@ -149,10 +150,16 @@ export async function sendPasswordResetEmail({
   });
 }
 
+/**
+ * Dekont onay/red bildirimi. Aidat ve kira aynı şablonu paylaşır; yalnızca
+ * borç türünü belirten metin (`type`) değişir. Varsayılan AIDAT olduğu için
+ * bu parametreyi geçmeyen eski çağrılar aynı şekilde çalışmaya devam eder.
+ */
 export async function sendPaymentStatusEmail({
   to,
   residentName,
   status,
+  type = "AIDAT",
   month,
   year,
   amount,
@@ -161,24 +168,21 @@ export async function sendPaymentStatusEmail({
   to: string;
   residentName: string;
   status: "APPROVED" | "REJECTED";
+  type?: "AIDAT" | "KIRA";
   month: number;
   year: number;
   amount: number;
   rejectionReason?: string;
 }) {
-  const MONTHS_TR = [
-    "", "Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran",
-    "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık",
-  ];
-
   const isApproved = status === "APPROVED";
   const statusText = isApproved ? "Onaylandı" : "Reddedildi";
   const statusColor = isApproved ? "#16a34a" : "#dc2626";
+  const typeLabel = type === "KIRA" ? "kira" : "aidat";
 
   await transporter.sendMail({
     from: FROM,
     to,
-    subject: `Dekontunuz ${statusText} - ${MONTHS_TR[month]} ${year}`,
+    subject: `${type === "KIRA" ? "Kira" : "Aidat"} dekontunuz ${statusText} - ${MONTHS_TR[month]} ${year}`,
     html: `
       <!DOCTYPE html>
       <html lang="tr">
@@ -199,7 +203,7 @@ export async function sendPaymentStatusEmail({
                     <p style="color: #475569; margin: 0 0 8px;">Merhaba <strong>${residentName}</strong>,</p>
                     <p style="color: #475569; margin: 0 0 20px;">
                       <strong>${MONTHS_TR[month]} ${year}</strong> ayına ait
-                      <strong>${amount.toLocaleString("tr-TR")} ₺</strong> tutarındaki aidat dekontunuz
+                      <strong>${amount.toLocaleString("tr-TR")} ₺</strong> tutarındaki ${typeLabel} dekontunuz
                       <strong style="color: ${statusColor};">${statusText.toLowerCase()}</strong>.
                     </p>
                     ${!isApproved && rejectionReason ? `
