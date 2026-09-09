@@ -1,5 +1,6 @@
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
+import { sortPeriodsByRelevance } from "@/lib/period";
 import { redirect, notFound } from "next/navigation";
 import { PaymentsManager } from "./_components/payments-manager";
 
@@ -36,9 +37,11 @@ export default async function PaymentsPage({ params }: { params: { id: string } 
   // type: "AIDAT" filtresi nedeniyle `due` her zaman doludur.
   const payments = rawPayments.map((p) => ({ ...p, due: p.due! }));
 
+  const sortedApartment = { ...apartment, dues: sortPeriodsByRelevance(apartment.dues) };
+
   return (
     <PaymentsManager
-      apartment={apartment}
+      apartment={sortedApartment}
       initialPayments={payments}
       units={apartment.units}
     />

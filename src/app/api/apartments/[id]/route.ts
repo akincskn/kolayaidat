@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
+import { sortPeriodsByRelevance } from "@/lib/period";
 
 async function getOwnedApartment(id: string, userId: string) {
   return prisma.apartment.findFirst({
@@ -21,13 +22,17 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
         include: { resident: { select: { id: true, name: true, email: true, phone: true } } },
         orderBy: { unitNumber: "asc" },
       },
-      dues: { orderBy: { year: "desc", month: "desc" }, take: 6 },
+      dues: { orderBy: [{ year: "desc" }, { month: "desc" }] },
     },
   });
 
   if (!apartment) return NextResponse.json({ error: "Apartman bulunamadı." }, { status: 404 });
 
-  return NextResponse.json(apartment);
+  // Son 6 dönem: güncel aydan geriye doğru, en uzak gelecek yerine (bkz. lib/period).
+  return NextResponse.json({
+    ...apartment,
+    dues: sortPeriodsByRelevance(apartment.dues).slice(0, 6),
+  });
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {

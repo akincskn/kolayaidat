@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireAdmin, requireManagedLease } from "@/lib/authz";
 import { firstZodError, updateLeaseSchema } from "@/lib/validations/lease";
 import { findConflictingActiveLease, syncLeaseCharges } from "@/lib/lease";
+import { sortPeriodsByRelevance } from "@/lib/period";
 
 /** Admin: sözleşme detayı (borçlar ve ödemeleriyle). */
 export async function GET(
@@ -21,7 +22,7 @@ export async function GET(
     orderBy: [{ year: "desc" }, { month: "desc" }],
   });
 
-  return NextResponse.json({ ...guard.data, charges });
+  return NextResponse.json({ ...guard.data, charges: sortPeriodsByRelevance(charges) });
 }
 
 /**

@@ -1,5 +1,6 @@
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
+import { sortPeriodsByRelevance } from "@/lib/period";
 import { redirect, notFound } from "next/navigation";
 import { DuesManager } from "./_components/dues-manager";
 
@@ -26,9 +27,12 @@ export default async function DuesPage({ params }: { params: { id: string } }) {
     where: { apartmentId: params.id, residentId: { not: null } },
   });
 
+  // Dönem sırası: güncel ay üstte, gelecek aylar sonda (bkz. lib/period).
+  const sortedApartment = { ...apartment, dues: sortPeriodsByRelevance(apartment.dues) };
+
   return (
     <DuesManager
-      apartment={apartment}
+      apartment={sortedApartment}
       occupiedUnits={occupiedUnits}
     />
   );

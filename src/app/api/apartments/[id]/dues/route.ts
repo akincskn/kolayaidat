@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
+import { sortPeriodsByRelevance } from "@/lib/period";
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   const session = await auth();
@@ -24,7 +25,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     orderBy: [{ year: "desc" }, { month: "desc" }],
   });
 
-  return NextResponse.json(dues);
+  return NextResponse.json(sortPeriodsByRelevance(dues));
 }
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {

@@ -1,5 +1,6 @@
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
+import { sortPeriodsByRelevance } from "@/lib/period";
 import { redirect } from "next/navigation";
 import { PaymentTable } from "./_components/payment-table";
 
@@ -65,9 +66,8 @@ export default async function OdemelerPage({ searchParams }: PageProps) {
   for (const r of rentPeriods)
     periodMap.set(periodKey(r.year, r.month), { month: r.month, year: r.year });
 
-  const periods = Array.from(periodMap.values()).sort(
-    (a, b) => periodKey(b.year, b.month) - periodKey(a.year, a.month)
-  );
+  // Dönem seçici: güncel ay üstte, gelecek aylar sonda (bkz. lib/period).
+  const periods = sortPeriodsByRelevance(Array.from(periodMap.values()));
 
   // Seçili dönem — URL param > mevcut ay > en son dönem (mevcut mantık korunuyor)
   const now = new Date();

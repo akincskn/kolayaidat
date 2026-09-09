@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireResident } from "@/lib/authz";
 import { firstZodError } from "@/lib/validations/lease";
+import { sortPeriodsByRelevance } from "@/lib/period";
 
 /**
  * Sakin: kendi aidat ve kira borçlarını + ödemelerini getirir.
@@ -40,7 +41,13 @@ export async function GET() {
     }),
   ]);
 
-  return NextResponse.json({ unit, dues, rentCharges, payments });
+  // Dönem listeleri: güncel ay üstte, gelecek aylar sonda (bkz. lib/period).
+  return NextResponse.json({
+    unit,
+    dues: sortPeriodsByRelevance(dues),
+    rentCharges: sortPeriodsByRelevance(rentCharges),
+    payments,
+  });
 }
 
 /**

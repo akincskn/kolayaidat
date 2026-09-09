@@ -1,6 +1,7 @@
 import { redirect, notFound } from "next/navigation";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
+import { sortPeriodsByRelevance } from "@/lib/period";
 import { LeaseDetail, type LeaseDetailData } from "./_components/lease-detail";
 import { loadManagedLease } from "../_lib/load-lease";
 
@@ -32,7 +33,8 @@ export default async function LeaseDetailPage({
     rentIncreaseRate: lease.rentIncreaseRate,
     notes: lease.notes,
     status: lease.status,
-    charges: lease.charges.map((c) => {
+    // Taksitler: güncel ay üstte, gelecek aylar sonda (bkz. lib/period).
+    charges: sortPeriodsByRelevance(lease.charges).map((c) => {
       // Bir borca ait en fazla bir ödeme olabilir (@@unique[rentChargeId, unitId]).
       const payment = c.payments[0];
       return {

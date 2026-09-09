@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { AdminDashboard, type RentSummary } from "./_components/admin-dashboard";
 import { ResidentDashboard } from "./_components/resident-dashboard";
 import { LEASE_EXPIRY_WARNING_DAYS } from "@/lib/constants";
+import { sortPeriodsByRelevance } from "@/lib/period";
 
 interface PageProps {
   searchParams: Promise<{ apt?: string }>;
@@ -48,7 +49,16 @@ export default async function DashboardPage({ searchParams }: PageProps) {
 
     const rent = selectedId ? await getRentSummary(selectedId) : null;
 
-    return <AdminDashboard apartment={apartment} rent={rent} />;
+    return (
+      <AdminDashboard
+        apartment={
+          apartment
+            ? { ...apartment, dues: sortPeriodsByRelevance(apartment.dues) }
+            : null
+        }
+        rent={rent}
+      />
+    );
   }
 
   // RESIDENT dashboard
