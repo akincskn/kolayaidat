@@ -52,13 +52,37 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const expiresAt = new Date();
   expiresAt.setHours(expiresAt.getHours() + 48);
 
-  type InviteResult = { email: string; success: boolean; error?: string; inviteUrl?: string };
+  type InviteResult = {
+    email: string;
+    success: boolean;
+    error?: string;
+    inviteUrl?: string;
+    emailSent?: boolean;
+    emailError?: string;
+  };
   const results: InviteResult[] = [];
 
   for (const email of emails) {
-    const existingUser = await prisma.user.findUnique({ where: { email } });
-    if (existingUser) {
-      results.push({ email, success: false, error: "Bu e-posta zaten kayıtlı." });
+    // Daha önce kayıt olmuş bir e-posta da davet edilebilir: kullanıcı daveti
+    // mevcut şifresiyle kabul edip daireye bağlanır (bkz. /api/invite/accept).
+    // Tek engel, kullanıcının hâlihazırda başka bir dairede kayıtlı olması —
+    // Unit.residentId unique olduğu için bir kullanıcı tek daireye bağlanabilir.
+    const existingUser = await prisma.user.findUnique({
+      where: { email },
+      include: { unit: true },
+    });
+
+    if (existingUser?.role === "ADMIN") {
+      results.push({ email, success: false, error: "Yönetici hesabı sakin olarak davet edilemez." });
+      continue;
+    }
+
+    if (existingUser?.unit) {
+      results.push({
+        email,
+        success: false,
+        error: `Bu kullanıcı zaten Daire ${existingUser.unit.unitNumber} sakini.`,
+      });
       continue;
     }
 
@@ -68,6 +92,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       });
       const inviteUrl = `${process.env.NEXTAUTH_URL}/invite?token=${invite.token}`;
 
+      // E-posta gönderimi başarısız olsa da davet geçerlidir; yönetici linki
+      // elle paylaşabilsin diye hatayı sessizce yutmak yerine sonuca yazıyoruz.
+      let emailSent = true;
+      let emailError: string | undefined;
       try {
         await sendInviteEmail({
           to: email,
@@ -78,9 +106,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         });
       } catch (err) {
         console.error("[INVITE_EMAIL]", err);
+        emailSent = false;
+        emailError =
+          err instanceof Error ? err.message : "E-posta gönderilemedi.";
       }
 
-      results.push({ email, success: true, inviteUrl });
+      results.push({ email, success: true, inviteUrl, emailSent, emailError });
     } catch (err) {
       console.error("[INVITE_CREATE]", err);
       results.push({ email, success: false, error: "Davet oluşturulamadı." });

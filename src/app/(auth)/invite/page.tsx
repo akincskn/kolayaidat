@@ -19,6 +19,9 @@ interface InviteInfo {
   email: string;
   unitNumber: string;
   apartmentName: string;
+  /** true ise bu e-postayla zaten bir hesap var; yeni hesap açılmaz. */
+  hasAccount?: boolean;
+  name?: string | null;
 }
 
 function InviteForm() {
@@ -59,17 +62,21 @@ function InviteForm() {
       .finally(() => setIsValidating(false));
   }, [token, router]);
 
+  const hasAccount = !!inviteInfo?.hasAccount;
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
 
-    if (formData.password !== formData.confirmPassword) {
-      toast.error("Şifreler eşleşmiyor.");
-      return;
-    }
+    if (!hasAccount) {
+      if (formData.password !== formData.confirmPassword) {
+        toast.error("Şifreler eşleşmiyor.");
+        return;
+      }
 
-    if (formData.password.length < 6) {
-      toast.error("Şifre en az 6 karakter olmalıdır.");
-      return;
+      if (formData.password.length < 6) {
+        toast.error("Şifre en az 6 karakter olmalıdır.");
+        return;
+      }
     }
 
     setIsLoading(true);
@@ -80,7 +87,7 @@ function InviteForm() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           token,
-          name: formData.name,
+          name: hasAccount ? undefined : formData.name,
           password: formData.password,
         }),
       });
@@ -90,7 +97,11 @@ function InviteForm() {
       if (!res.ok) {
         toast.error(data.error || "Davet kabul edilirken hata oluştu.");
       } else {
-        toast.success("Hesabınız oluşturuldu! Giriş yapabilirsiniz.");
+        toast.success(
+          hasAccount
+            ? "Daireye eklendiniz! Giriş yapabilirsiniz."
+            : "Hesabınız oluşturuldu! Giriş yapabilirsiniz."
+        );
         router.push("/login");
       }
     } catch {
@@ -125,24 +136,34 @@ function InviteForm() {
       </CardHeader>
       <form onSubmit={handleSubmit}>
         <CardContent className="space-y-4">
+          {hasAccount ? (
+            <p className="rounded-md bg-slate-50 border border-slate-200 p-3 text-sm text-slate-600">
+              Bu e-posta ile zaten bir hesabınız var
+              {inviteInfo.name ? ` (${inviteInfo.name})` : ""}. Daireye
+              katılmak için mevcut şifrenizi girin.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              <Label htmlFor="name">Ad Soyad</Label>
+              <Input
+                id="name"
+                placeholder="Ahmet Yılmaz"
+                required
+                value={formData.name}
+                onChange={(e) =>
+                  setFormData({ ...formData, name: e.target.value })
+                }
+              />
+            </div>
+          )}
           <div className="space-y-2">
-            <Label htmlFor="name">Ad Soyad</Label>
-            <Input
-              id="name"
-              placeholder="Ahmet Yılmaz"
-              required
-              value={formData.name}
-              onChange={(e) =>
-                setFormData({ ...formData, name: e.target.value })
-              }
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="password">Şifre Belirle</Label>
+            <Label htmlFor="password">
+              {hasAccount ? "Mevcut Şifreniz" : "Şifre Belirle"}
+            </Label>
             <Input
               id="password"
               type="password"
-              placeholder="En az 6 karakter"
+              placeholder={hasAccount ? "••••••••" : "En az 6 karakter"}
               required
               value={formData.password}
               onChange={(e) =>
@@ -150,24 +171,40 @@ function InviteForm() {
               }
             />
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="confirmPassword">Şifre Tekrar</Label>
-            <Input
-              id="confirmPassword"
-              type="password"
-              placeholder="••••••••"
-              required
-              value={formData.confirmPassword}
-              onChange={(e) =>
-                setFormData({ ...formData, confirmPassword: e.target.value })
-              }
-            />
-          </div>
+          {!hasAccount && (
+            <div className="space-y-2">
+              <Label htmlFor="confirmPassword">Şifre Tekrar</Label>
+              <Input
+                id="confirmPassword"
+                type="password"
+                placeholder="••••••••"
+                required
+                value={formData.confirmPassword}
+                onChange={(e) =>
+                  setFormData({ ...formData, confirmPassword: e.target.value })
+                }
+              />
+            </div>
+          )}
         </CardContent>
-        <CardFooter>
+        <CardFooter className="flex-col gap-2">
           <Button type="submit" className="w-full" disabled={isLoading}>
-            {isLoading ? "Hesap oluşturuluyor..." : "Hesabımı Oluştur"}
+            {isLoading
+              ? hasAccount
+                ? "Daireye ekleniyor..."
+                : "Hesap oluşturuluyor..."
+              : hasAccount
+              ? "Daireye Katıl"
+              : "Hesabımı Oluştur"}
           </Button>
+          {hasAccount && (
+            <a
+              href="/forgot-password"
+              className="text-xs text-slate-500 hover:text-slate-700"
+            >
+              Şifremi unuttum
+            </a>
+          )}
         </CardFooter>
       </form>
     </Card>

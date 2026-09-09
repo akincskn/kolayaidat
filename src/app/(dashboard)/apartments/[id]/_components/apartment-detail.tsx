@@ -56,7 +56,15 @@ type Apartment = {
 
 type TabValue = "aidat" | "kira";
 
-type InviteResult = { email: string; success: boolean; error?: string; inviteUrl?: string };
+type InviteResult = {
+  email: string;
+  success: boolean;
+  error?: string;
+  inviteUrl?: string;
+  /** Davet kaydı oluştu ama SMTP gönderimi başarısızsa false. */
+  emailSent?: boolean;
+  emailError?: string;
+};
 
 // -----------------------------------------------------------
 // Tag input: Enter ile email ekle, max 4, × ile kaldır
@@ -275,13 +283,17 @@ export function ApartmentDetail({
       const results: InviteResult[] = data.results ?? [];
       const successCount = results.filter((r) => r.success).length;
       const errorCount = results.filter((r) => !r.success).length;
+      // Davet oluşup e-posta gidemediyse sonuç panelini açık tut ki yönetici
+      // bağlantıyı kopyalayabilsin.
+      const mailFailCount = results.filter((r) => r.success && r.emailSent === false).length;
 
-      if (errorCount === 0) {
+      if (errorCount === 0 && mailFailCount === 0) {
         toast.success(successCount === 1 ? "Davet gönderildi!" : `${successCount} davet gönderildi!`);
         closeInviteDialog();
       } else {
         setInviteResults(results);
-        if (successCount > 0) toast.warning(`${successCount} davet gönderildi, ${errorCount} hata.`);
+        if (errorCount === 0) toast.warning("Davet oluşturuldu ama e-posta gönderilemedi.");
+        else if (successCount > 0) toast.warning(`${successCount} davet gönderildi, ${errorCount} hata.`);
         else toast.error("Hiçbir davet gönderilemedi.");
       }
     } catch { toast.error("Bağlantı hatası oluştu."); }
@@ -352,13 +364,17 @@ export function ApartmentDetail({
       const results: InviteResult[] = data.results ?? [];
       const successCount = results.filter((r) => r.success).length;
       const errorCount = results.filter((r) => !r.success).length;
+      // Davet oluşup e-posta gidemediyse sonuç panelini açık tut ki yönetici
+      // bağlantıyı kopyalayabilsin.
+      const mailFailCount = results.filter((r) => r.success && r.emailSent === false).length;
 
-      if (errorCount === 0) {
+      if (errorCount === 0 && mailFailCount === 0) {
         toast.success(successCount === 1 ? "Davet gönderildi!" : `${successCount} davet gönderildi!`);
         closeResidentDialog();
       } else {
         setResidentInviteResults(results);
-        if (successCount > 0) toast.warning(`${successCount} davet gönderildi, ${errorCount} hata.`);
+        if (errorCount === 0) toast.warning("Davet oluşturuldu ama e-posta gönderilemedi.");
+        else if (successCount > 0) toast.warning(`${successCount} davet gönderildi, ${errorCount} hata.`);
         else toast.error("Hiçbir davet gönderilemedi.");
       }
     } catch { toast.error("Bağlantı hatası oluştu."); }
@@ -760,15 +776,26 @@ export function ApartmentDetail({
                   <div
                     key={r.email}
                     className={`flex items-start gap-2 rounded-lg px-3 py-2 text-sm ${
-                      r.success
-                        ? "bg-green-50 border border-green-200 text-green-700"
-                        : "bg-red-50 border border-red-200 text-red-700"
+                      !r.success
+                        ? "bg-red-50 border border-red-200 text-red-700"
+                        : r.emailSent === false
+                        ? "bg-amber-50 border border-amber-200 text-amber-700"
+                        : "bg-green-50 border border-green-200 text-green-700"
                     }`}
                   >
-                    <span className="font-medium shrink-0">{r.success ? "✓" : "✗"}</span>
+                    <span className="font-medium shrink-0">
+                      {!r.success ? "✗" : r.emailSent === false ? "!" : "✓"}
+                    </span>
                     <div className="min-w-0 flex-1">
                       <p className="truncate">{r.email}</p>
                       {r.error && <p className="text-xs opacity-80">{r.error}</p>}
+                      {r.success && r.emailSent === false && (
+                        <p className="text-xs opacity-80">
+                          Davet oluşturuldu ama e-posta gönderilemedi. Bağlantıyı
+                          kopyalayıp paylaşın.
+                          {r.emailError ? ` (${r.emailError})` : ""}
+                        </p>
+                      )}
                     </div>
                     {r.success && r.inviteUrl && (
                       <Button
@@ -867,15 +894,26 @@ export function ApartmentDetail({
                   <div
                     key={r.email}
                     className={`flex items-start gap-2 rounded-lg px-3 py-2 text-sm ${
-                      r.success
-                        ? "bg-green-50 border border-green-200 text-green-700"
-                        : "bg-red-50 border border-red-200 text-red-700"
+                      !r.success
+                        ? "bg-red-50 border border-red-200 text-red-700"
+                        : r.emailSent === false
+                        ? "bg-amber-50 border border-amber-200 text-amber-700"
+                        : "bg-green-50 border border-green-200 text-green-700"
                     }`}
                   >
-                    <span className="font-medium shrink-0">{r.success ? "✓" : "✗"}</span>
+                    <span className="font-medium shrink-0">
+                      {!r.success ? "✗" : r.emailSent === false ? "!" : "✓"}
+                    </span>
                     <div className="min-w-0 flex-1">
                       <p className="truncate">{r.email}</p>
                       {r.error && <p className="text-xs opacity-80">{r.error}</p>}
+                      {r.success && r.emailSent === false && (
+                        <p className="text-xs opacity-80">
+                          Davet oluşturuldu ama e-posta gönderilemedi. Bağlantıyı
+                          kopyalayıp paylaşın.
+                          {r.emailError ? ` (${r.emailError})` : ""}
+                        </p>
+                      )}
                     </div>
                     {r.success && r.inviteUrl && (
                       <Button

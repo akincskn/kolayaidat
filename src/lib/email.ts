@@ -1,17 +1,67 @@
 import nodemailer from "nodemailer";
 import { MONTHS_TR } from "@/lib/constants";
 
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST ?? "smtp.gmail.com",
-  port: Number(process.env.SMTP_PORT ?? 587),
-  secure: false, // STARTTLS
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
+/**
+ * SMTP ayarları eksikse nodemailer sessizce "auth yok" sayıp bağlantıyı
+ * reddediyor ve hata mesajı anlaşılmaz oluyor. Bu yüzden gönderim öncesi
+ * açıkça kontrol edip okunabilir bir hata fırlatıyoruz.
+ */
+export class EmailNotConfiguredError extends Error {
+  constructor(missing: string[]) {
+    super(
+      `E-posta gönderilemedi: SMTP ayarları eksik (${missing.join(", ")}). ` +
+        `Ortam değişkenlerini (.env / Vercel Environment Variables) tanımlayın.`
+    );
+    this.name = "EmailNotConfiguredError";
+  }
+}
 
-const FROM = `KolayAidat <${process.env.SMTP_USER}>`;
+/**
+ * Ortam değişkenlerini temizler. Panoya kopyalanan değerlerin sonuna
+ * kaçış dizisi olarak `\n` yapışabiliyor; bu durumda SMTP_PORT sayıya
+ * çevrilemiyor ve kullanıcı adı/şifre doğrulaması sessizce başarısız oluyor.
+ */
+function env(key: string): string | undefined {
+  const raw = process.env[key];
+  if (raw === undefined) return undefined;
+  const cleaned = raw.replace(/\\[rn]/g, "").trim();
+  return cleaned || undefined;
+}
+
+export function getSmtpConfigError(): EmailNotConfiguredError | null {
+  const missing = ["SMTP_USER", "SMTP_PASS"].filter((key) => !env(key));
+  return missing.length ? new EmailNotConfiguredError(missing) : null;
+}
+
+// Transporter lazy oluşturuluyor: modül import edildiğinde env henüz
+// yüklenmemiş olabilir ve eksik ayarla oluşan transporter cache'lenir.
+let cachedTransporter: nodemailer.Transporter | null = null;
+
+function getTransporter() {
+  const configError = getSmtpConfigError();
+  if (configError) throw configError;
+
+  if (!cachedTransporter) {
+    const port = Number(env("SMTP_PORT") ?? 587) || 587;
+    cachedTransporter = nodemailer.createTransport({
+      host: env("SMTP_HOST") ?? "smtp.gmail.com",
+      port,
+      secure: port === 465, // 465 -> implicit TLS, 587 -> STARTTLS
+      auth: {
+        user: env("SMTP_USER"),
+        pass: env("SMTP_PASS"),
+      },
+    });
+  }
+  return cachedTransporter;
+}
+
+function sendMail(options: nodemailer.SendMailOptions) {
+  return getTransporter().sendMail({
+    from: `KolayAidat <${env("SMTP_FROM") ?? env("SMTP_USER")}>`,
+    ...options,
+  });
+}
 
 export async function sendInviteEmail({
   to,
@@ -26,8 +76,7 @@ export async function sendInviteEmail({
   unitNumber: string;
   invitedBy: string;
 }) {
-  await transporter.sendMail({
-    from: FROM,
+  await sendMail({
     to,
     subject: `${apartmentName} - Apartman Sistemi Davetiyesi`,
     html: `
@@ -92,8 +141,7 @@ export async function sendPasswordResetEmail({
   to: string;
   resetUrl: string;
 }) {
-  await transporter.sendMail({
-    from: FROM,
+  await sendMail({
     to,
     subject: "KolayAidat - Şifre Sıfırlama",
     html: `
@@ -179,8 +227,7 @@ export async function sendPaymentStatusEmail({
   const statusColor = isApproved ? "#16a34a" : "#dc2626";
   const typeLabel = type === "KIRA" ? "kira" : "aidat";
 
-  await transporter.sendMail({
-    from: FROM,
+  await sendMail({
     to,
     subject: `${type === "KIRA" ? "Kira" : "Aidat"} dekontunuz ${statusText} - ${MONTHS_TR[month]} ${year}`,
     html: `

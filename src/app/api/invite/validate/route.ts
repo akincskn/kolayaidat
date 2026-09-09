@@ -50,9 +50,18 @@ export async function GET(req: NextRequest) {
     );
   }
 
+  // Bu e-postayla hesap varsa davet ekranı "hesap oluştur" yerine
+  // "mevcut şifrenle daireye katıl" akışını gösterir.
+  const existingUser = await prisma.user.findUnique({
+    where: { email: invite.email },
+    select: { name: true },
+  });
+
   return NextResponse.json({
     email: invite.email,
     unitNumber: invite.unit.unitNumber,
     apartmentName: invite.unit.apartment.name,
+    hasAccount: !!existingUser,
+    name: existingUser?.name ?? null,
   });
 }

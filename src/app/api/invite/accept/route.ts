@@ -20,7 +20,9 @@ export async function POST(req: NextRequest) {
   try {
     const { token, name, password } = await req.json();
 
-    if (!token || !name || !password) {
+    // Mevcut hesap sahipleri için `name` istenmez; kimlik doğrulaması
+    // kullanıcının kayıtlı şifresiyle yapılır.
+    if (!token || !password) {
       return NextResponse.json(
         { error: "Tüm alanlar zorunludur." },
         { status: 400 }
@@ -63,13 +65,55 @@ export async function POST(req: NextRequest) {
 
     const existing = await prisma.user.findUnique({
       where: { email: invite.email },
+      include: { unit: true },
     });
 
+    // Daha önce kayıt olmuş kullanıcı: yeni hesap açılmaz, mevcut şifresiyle
+    // doğrulanıp daireye bağlanır.
     if (existing) {
-      return NextResponse.json(
-        { error: "Bu e-posta adresi zaten kullanılıyor." },
-        { status: 409 }
-      );
+      if (existing.role === "ADMIN") {
+        return NextResponse.json(
+          { error: "Yönetici hesabı sakin olarak eklenemez." },
+          { status: 409 }
+        );
+      }
+
+      if (existing.unit) {
+        return NextResponse.json(
+          { error: "Bu hesap zaten bir dairede kayıtlı." },
+          { status: 409 }
+        );
+      }
+
+      if (!existing.password) {
+        return NextResponse.json(
+          { error: "Hesabınızda şifre tanımlı değil. Önce 'Şifremi unuttum' ile şifre belirleyin." },
+          { status: 409 }
+        );
+      }
+
+      const valid = await bcrypt.compare(password, existing.password);
+      if (!valid) {
+        return NextResponse.json({ error: "Şifre hatalı." }, { status: 401 });
+      }
+
+      await prisma.$transaction(async (tx) => {
+        await tx.unit.update({
+          where: { id: invite.unitId },
+          data: { residentId: existing.id },
+        });
+
+        await tx.invite.update({
+          where: { id: invite.id },
+          data: { usedAt: new Date(), invitedUser: existing.id },
+        });
+      });
+
+      return NextResponse.json({ success: true, existingAccount: true }, { status: 200 });
+    }
+
+    if (!name) {
+      return NextResponse.json({ error: "Ad soyad zorunludur." }, { status: 400 });
     }
 
     const hashed = await bcrypt.hash(password, 10);
